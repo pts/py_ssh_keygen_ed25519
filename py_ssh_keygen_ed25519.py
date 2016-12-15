@@ -16,24 +16,17 @@ import sys
 #
 
 # !! Namespace this.
-q = 2 ** 255 - 19
-l = 2 ** 252 + 27742317777372353535851937790883648493
-
-
-def H(m):
-    return hashlib.sha512(m).digest()
-
-
-def pow2(x, p):
-    """== pow(x, 2**p, q)"""
-    while p > 0:
-        x = x * x % q
-        p -= 1
-    return x
-
+q = (1 << 255) - 19
 
 def inv(z):
     """$= z^{-1} \mod q$, for z != 0"""
+    def pow2(x, p):
+        """== pow(x, 2**p, q)"""
+        while p > 0:
+            x = x * x % q
+            p -= 1
+        return x
+
     # Adapted from curve25519_athlon.c in djb's Curve25519.
     z2 = z * z % q                                # 2
     z9 = pow2(z2, 2) * z % q                      # 9
@@ -49,124 +42,64 @@ def inv(z):
     return pow2(z2_250_0, 5) * z11 % q            # 2^255 - 2^5 + 11 = q - 2
 
 
-d = -121665 * inv(121666) % q
-I = pow(2, (q - 1) // 4, q)
-
-
-def xrecover(y):
-    xx = (y * y - 1) * inv(d * y * y + 1)
-    x = pow(xx, (q + 3) // 8, q)
-
-    if (x * x - xx) % q != 0:
-        x = (x * I) % q
-
-    if x % 2 != 0:
-        x = q-x
-
-    return x
-
-
-By = 4 * inv(5)
-Bx = xrecover(By)
-B = (Bx % q, By % q, 1, (Bx * By) % q)
-ident = (0, 1, 1, 0)
-
-
-def edwards_add(P, Q):
-    # This is formula sequence 'addition-add-2008-hwcd-3' from
-    # http://www.hyperelliptic.org/EFD/g1p/auto-twisted-extended-1.html
-    (x1, y1, z1, t1) = P
-    (x2, y2, z2, t2) = Q
-
-    a = (y1-x1)*(y2-x2) % q
-    b = (y1+x1)*(y2+x2) % q
-    c = t1*2*d*t2 % q
-    dd = z1*2*z2 % q
-    e = b - a
-    f = dd - c
-    g = dd + c
-    h = b + a
-    x3 = e*f
-    y3 = g*h
-    t3 = e*h
-    z3 = f*g
-
-    return (x3 % q, y3 % q, z3 % q, t3 % q)
-
-
-def edwards_double(P):
-    # This is formula sequence 'dbl-2008-hwcd' from
-    # http://www.hyperelliptic.org/EFD/g1p/auto-twisted-extended-1.html
-    (x1, y1, z1, t1) = P
-
-    a = x1*x1 % q
-    b = y1*y1 % q
-    c = 2*z1*z1 % q
-    # dd = -a
-    e = ((x1+y1)*(x1+y1) - a - b) % q
-    g = -a + b  # dd + b
-    f = g - c
-    h = -a - b  # dd - b
-    x3 = e*f
-    y3 = g*h
-    t3 = e*h
-    z3 = f*g
-
-    return (x3 % q, y3 % q, z3 % q, t3 % q)
-
-
-# Bpow[i] == scalarmult(B, 2**i)
-Bpow = []
-
-
 def make_Bpow():
-    P = B
-    for i in xrange(253):
-        Bpow.append(P)
-        P = edwards_double(P)
-make_Bpow()
-
-
-def scalarmult_B(e):
-    """
-    Implements scalarmult(B, e) more efficiently.
-    """
-    # scalarmult(B, l) is the identity
-    e = e % l
-    P = ident
-    for i in xrange(253):
-        if e & 1:
-            P = edwards_add(P, Bpow[i])
-        e = e // 2
-    assert e == 0, e
-    return P
-
-
-def encodepoint(P):
-    (x, y, z, t) = P
-    zi = inv(z)
-    x = (x * zi) % q
-    y = (y * zi) % q
-    bits = [(y >> i) & 1 for i in xrange(255)] + [x & 1]
-    return ''.join([
-        chr(sum([bits[i * 8 + j] << j for j in xrange(8)]))
-        for i in xrange(32)])
+    Bpow = [(0x216936d3cd6e53fec0a4e231fdd6dc5c692cc7609525a7b2c9562d608f25d51a, 0x6666666666666666666666666666666666666666666666666666666666666658, 1, 0x67875f0fd78b766566ea4e8e64abe37d20f09f80775152f56dde8ab3a5b7dda3)]
+    for i in xrange(252):
+        # This is formula sequence 'dbl-2008-hwcd' from
+        # http://www.hyperelliptic.org/EFD/g1p/auto-twisted-extended-1.html
+        x1, y1, z1, t1 = Bpow[-1]
+        a = x1*x1 % q
+        b = y1*y1 % q
+        c = ((z1*z1) << 1) % q
+        # dd = -a
+        e = ((x1+y1)*(x1+y1) - a - b) % q
+        g = -a + b  # dd + b
+        f = g - c
+        h = -a - b  # dd - b
+        Bpow.append((e * f % q, g * h % q, f * g % q, e * h % q))
+    return Bpow  # Has 253 elements.
+Bpow = make_Bpow()  # Bpow[i] == scalarmult(B, 2**i).
 
 
 def bit(h, i):
-    return (ord(h[i // 8]) >> (i % 8)) & 1
+    return (ord(h[i >> 3]) >> (i % 8)) & 1
 
 
 def publickey_unsafe(sk):
-    """
-    Not safe to use with secret keys or secret data.
+    """Computes the public key from the private key.
 
-    See module docstring.  This function should be used for testing only.
+    Not safe to use with secret keys or secret data.
+    TODO(pts): Copy-paste why.
     """
-    h = H(sk)
-    a = 2 ** 254 + sum(2 ** i * bit(h, i) for i in xrange(3, 254))
-    A = scalarmult_B(a)
-    return encodepoint(A)
+    if len(sk) != 32:
+      raise ValueError('Expected private key size: 32.')
+    h = hashlib.sha512(sk).digest()
+    e = (1 << 254) + sum((1 << i) * bit(h, i) for i in xrange(3, 254))  # !! TODO(pts): Go by byte.
+    # scalarmult(B, l) is the identity
+    e %= 0x1000000000000000000000000000000014def9dea2f79cd65812631a5cf5d3ed
+    x, y, z, t = 0, 1, 1, 0
+    for i in xrange(253):
+        if e & 1:
+            # This is formula sequence 'addition-add-2008-hwcd-3' from
+            # http://www.hyperelliptic.org/EFD/g1p/auto-twisted-extended-1.html
+            x2, y2, z2, t2 = Bpow[i]
+            a = (y-x)*(y2-x2) % q
+            b = (y+x)*(y2+x2) % q
+            c = t * 0xa406d9dc56dffce7198e80f2eef3d13000e0149a8283b156ebd69b9426b2f146 % q * t2 % q
+            dd = ((z*z2) << 1) % q
+            ee = b - a
+            f = dd - c
+            g = dd + c
+            hh = b + a
+            x, y, z, t = (ee * f % q, g * hh % q, f * g % q, ee * hh % q)
+        e >>= 1
+    zi = inv(z)
+    x = (x * zi) % q
+    y = (y * zi) % q
+    bits = [(y >> i) & 1 for i in xrange(255)] + [x & 1]  # !! TODO(pts): By byte.
+    return ''.join(  # A string of 32 bytes.
+        chr(sum([bits[i * 8 + j] << j for j in xrange(8)]))
+        for i in xrange(32))
 
 
 # ---
