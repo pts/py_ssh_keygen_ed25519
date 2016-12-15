@@ -5,7 +5,7 @@
 #
 
 import base64
-import hashlib
+import hashlib  # Needs `easy_install hashlib' on Python 2.4.
 import re
 import struct
 import sys
@@ -15,92 +15,97 @@ import sys
 # Based on: https://github.com/pyca/ed25519/blob/master/ed25519.py
 #
 
-# !! Namespace this.
-q = (1 << 255) - 19
+def get_ed25519_public_key_unsafe(private_key, _bpow=[]):
+  """Computes the public key from the private key.
 
-def inv(z):
-    """$= z^{-1} \mod q$, for z != 0"""
-    def pow2(x, p):
-        """== pow(x, 2**p, q)"""
-        while p > 0:
-            x = x * x % q
-            p -= 1
-        return x
+  Not safe to use with secret keys or secret data.
+  TODO(pts): Copy-paste why.
+  
+  Implementation based on:
+  https://github.com/pyca/ed25519/blob/master/ed25519.py
+  """
+  if len(private_key) != 32:
+    raise ValueError('Expected private key size: 32.')
+  h = hashlib.sha512(private_key).digest()[:32]
+  # Constants inlined.
+  e = ((1 << 254) | (int(h[::-1].encode('hex'), 16) & ~(7 | 1 << 255))) % (
+      (1 << 252) + 0x14def9dea2f79cd65812631a5cf5d3ed)
+  q = (1 << 255) - 19
+  if not _bpow:
+    _bpow.append((
+        0x216936d3cd6e53fec0a4e231fdd6dc5c692cc7609525a7b2c9562d608f25d51a,
+        0x6666666666666666666666666666666666666666666666666666666666666658, 1,
+        0x67875f0fd78b766566ea4e8e64abe37d20f09f80775152f56dde8ab3a5b7dda3))
+    for i in xrange(252):  # _bpow[i] == scalarmult(B, 2**i).
+      # This is formula sequence 'dbl-2008-hwcd' from
+      # http://www.hyperelliptic.org/EFD/g1p/auto-twisted-extended-1.html
+      x1, y1, z1, t1 = _bpow[-1]
+      a = x1 * x1 % q
+      b = y1 * y1 % q
+      c = ((z1 * z1) << 1) % q
+      hh = -a - b  # dd - b
+      ee = ((x1 + y1) * (x1 + y1) + hh) % q
+      g = -a + b  # dd + b
+      f = g - c
+      _bpow.append((ee * f % q, g * hh % q, f * g % q, ee * hh % q))
+  x, y, z, t = 0, 1, 1, 0
+  for i in xrange(253):
+    if e & 1:
+      # This is formula sequence 'addition-add-2008-hwcd-3' from
+      # http://www.hyperelliptic.org/EFD/g1p/auto-twisted-extended-1.html
+      x2, y2, z2, t2 = _bpow[i]
+      a = (y - x) * (y2 - x2) % q
+      b = (y + x) * (y2 + x2) % q
+      c = t * 0xa406d9dc56dffce7198e80f2eef3d13000e0149a8283b156ebd69b9426b2f146 % q * t2 % q
+      dd = ((z * z2) << 1) % q
+      ee = b - a
+      f = dd - c
+      g = dd + c
+      hh = b + a
+      x, y, z, t = (ee * f % q, g * hh % q, f * g % q, ee * hh % q)
+    e >>= 1
 
-    # Adapted from curve25519_athlon.c in djb's Curve25519.
-    z2 = z * z % q                                # 2
-    z9 = pow2(z2, 2) * z % q                      # 9
-    z11 = z9 * z2 % q                             # 11
-    z2_5_0 = (z11 * z11) % q * z9 % q             # 31 == 2^5 - 2^0
-    z2_10_0 = pow2(z2_5_0, 5) * z2_5_0 % q        # 2^10 - 2^0
-    z2_20_0 = pow2(z2_10_0, 10) * z2_10_0 % q     # ...
-    z2_40_0 = pow2(z2_20_0, 20) * z2_20_0 % q
-    z2_50_0 = pow2(z2_40_0, 10) * z2_10_0 % q
-    z2_100_0 = pow2(z2_50_0, 50) * z2_50_0 % q
-    z2_200_0 = pow2(z2_100_0, 100) * z2_100_0 % q
-    z2_250_0 = pow2(z2_200_0, 50) * z2_50_0 % q   # 2^250 - 2^0
-    return pow2(z2_250_0, 5) * z11 % q            # 2^255 - 2^5 + 11 = q - 2
+  def pow2(x, p):
+    """== pow(x, 1 << p, q)"""  # TODO(pts): Which one is faster?
+    while p > 0:
+      x = x * x % q
+      p -= 1
+    return x
+
+  # z= z^{-1} \mod q$, for z != 0.
+  # Adapted from curve25519_athlon.c in djb's Curve25519.
+  #z2 = z * z % q
+  #z4 = z2 * z2 % q
+  #z9 = z4 * z % q
+  #z11 = z9 * z2 % q
+  #z2_5 = (z11 * z11) % q * z9 % q
+  #z2_10 = pow2(z2_5, 5) * z2_5 % q
+  #z2_20 = pow2(z2_10, 10) * z2_10 % q
+  #z2_40 = pow2(z2_20, 20) * z2_20 % q
+  #z2_50 = pow2(z2_40, 10) * z2_10 % q
+  #z2_100 = pow2(z2_50, 50) * z2_50 % q
+  #z2_200 = pow2(z2_100, 100) * z2_100 % q
+  #z2_250 = pow2(z2_200, 50) * z2_50 % q
+  #zi = pow2(z2_250, 5) * z11 % q  # 2^255 - 2^5 + 11 = q - 2
+  #assert zi == pow(z, pow(2, (q - 2), 57896044618658097711785492504343953926634992332820282019728792003956564819948), q)
+  #print z * zi % q
+  #assert z * zi % q == 1
+  z2 = z * z % q                                # 2
+  z9 = pow2(z2, 2) * z % q                      # 9
+  z11 = z9 * z2 % q                             # 11
+  z2_5_0 = (z11 * z11) % q * z9 % q             # 31 == 2^5 - 2^0
+  z2_10_0 = pow2(z2_5_0, 5) * z2_5_0 % q        # 2^10 - 2^0
+  z2_20_0 = pow2(z2_10_0, 10) * z2_10_0 % q     # ...
+  z2_40_0 = pow2(z2_20_0, 20) * z2_20_0 % q
+  z2_50_0 = pow2(z2_40_0, 10) * z2_10_0 % q
+  z2_100_0 = pow2(z2_50_0, 50) * z2_50_0 % q
+  z2_200_0 = pow2(z2_100_0, 100) * z2_100_0 % q
+  z2_250_0 = pow2(z2_200_0, 50) * z2_50_0 % q   # 2^250 - 2^0
+  zi = pow2(z2_250_0, 5) * z11 % q            # 2^255 - 2^5 + 11 = q - 2
 
 
-def make_Bpow():
-    Bpow = [(0x216936d3cd6e53fec0a4e231fdd6dc5c692cc7609525a7b2c9562d608f25d51a, 0x6666666666666666666666666666666666666666666666666666666666666658, 1, 0x67875f0fd78b766566ea4e8e64abe37d20f09f80775152f56dde8ab3a5b7dda3)]
-    for i in xrange(252):
-        # This is formula sequence 'dbl-2008-hwcd' from
-        # http://www.hyperelliptic.org/EFD/g1p/auto-twisted-extended-1.html
-        x1, y1, z1, t1 = Bpow[-1]
-        a = x1*x1 % q
-        b = y1*y1 % q
-        c = ((z1*z1) << 1) % q
-        # dd = -a
-        e = ((x1+y1)*(x1+y1) - a - b) % q
-        g = -a + b  # dd + b
-        f = g - c
-        h = -a - b  # dd - b
-        Bpow.append((e * f % q, g * h % q, f * g % q, e * h % q))
-    return Bpow  # Has 253 elements.
-Bpow = make_Bpow()  # Bpow[i] == scalarmult(B, 2**i).
-
-
-def bit(h, i):
-    return (ord(h[i >> 3]) >> (i % 8)) & 1
-
-
-def publickey_unsafe(sk):
-    """Computes the public key from the private key.
-
-    Not safe to use with secret keys or secret data.
-    TODO(pts): Copy-paste why.
-    """
-    if len(sk) != 32:
-      raise ValueError('Expected private key size: 32.')
-    h = hashlib.sha512(sk).digest()
-    e = (1 << 254) + sum((1 << i) * bit(h, i) for i in xrange(3, 254))  # !! TODO(pts): Go by byte.
-    # scalarmult(B, l) is the identity
-    e %= 0x1000000000000000000000000000000014def9dea2f79cd65812631a5cf5d3ed
-    x, y, z, t = 0, 1, 1, 0
-    for i in xrange(253):
-        if e & 1:
-            # This is formula sequence 'addition-add-2008-hwcd-3' from
-            # http://www.hyperelliptic.org/EFD/g1p/auto-twisted-extended-1.html
-            x2, y2, z2, t2 = Bpow[i]
-            a = (y-x)*(y2-x2) % q
-            b = (y+x)*(y2+x2) % q
-            c = t * 0xa406d9dc56dffce7198e80f2eef3d13000e0149a8283b156ebd69b9426b2f146 % q * t2 % q
-            dd = ((z*z2) << 1) % q
-            ee = b - a
-            f = dd - c
-            g = dd + c
-            hh = b + a
-            x, y, z, t = (ee * f % q, g * hh % q, f * g % q, ee * hh % q)
-        e >>= 1
-    zi = inv(z)
-    x = (x * zi) % q
-    y = (y * zi) % q
-    bits = [(y >> i) & 1 for i in xrange(255)] + [x & 1]  # !! TODO(pts): By byte.
-    return ''.join(  # A string of 32 bytes.
-        chr(sum([bits[i * 8 + j] << j for j in xrange(8)]))
-        for i in xrange(32))
-
+  x, y = (x * zi) % q, (y * zi) % q
+  return ('%064x' % (y & ~(1 << 255) | ((x & 1) << 255))).decode('hex')[::-1]
 
 # ---
 
@@ -189,7 +194,7 @@ def parse_openssh_private_key_ed22519(data):
   if private_key_desc[j:] != ''.join(
       chr(k) for k in xrange(1, 1 + len(private_key_desc) - j)):
     raise ValueError('Unexpected padding value.')
-  if public_key != publickey_unsafe(private_key):
+  if public_key != get_ed25519_public_key_unsafe(private_key):
     raise ValueError('Public key and private key do not match.')
   return public_key, comment, private_key, checkstr1
 
@@ -206,12 +211,12 @@ def build_openssh_private_key_ed22519(public_key, comment, private_key,
   elif len(private_key) != 32:
     raise ValueError('Expected private key size: 32 or 64')
   if not public_key:
-    public_key = publickey_unsafe(private_key)
+    public_key = get_ed25519_public_key_unsafe(private_key)
     assert len(public_key) == 32
   else:
     if len(public_key) != 32:
       raise ValueError('Expected public key size: 32')
-    if public_key != publickey_unsafe(private_key):
+    if public_key != get_ed25519_public_key_unsafe(private_key):
       raise ValueError('Public key and private key do not match.')
   if len(checkstr) != 4:
     raise ValueError('Expected checkstr size: 4')
