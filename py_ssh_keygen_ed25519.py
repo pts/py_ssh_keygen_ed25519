@@ -19,11 +19,11 @@ crypto primitives are built in
 
 Usage for keypair generation (as a replacement for ssh-keygen):
 
-  py_ssh_keygen_ed22159.py -t ed2215 -f <outfile> [-C <comment>]
+  py_ssh_keygen_ed25519.py -t ed25519 -f <outfile> [-C <comment>]
 
 Usage for keypair file verification:
 
-  py_ssh_keygen_ed22159.py --check [<filename> ...]
+  py_ssh_keygen_ed25519.py --check [<filename> ...]
 """
 
 import base64
