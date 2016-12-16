@@ -266,7 +266,11 @@ def build_openssh_public_key_ed25519(public_key, comment):
 
 
 def check_keyfiles_ed25519(filename):
-  private_key_data = open(filename).read()
+  f = open(filename)
+  try:
+    private_key_data = f.read()
+  finally:
+    f.close()
   public_key, comment, private_key, checkstr = (
       parse_openssh_private_key_ed25519(private_key_data))
   private_key_data2 = build_openssh_private_key_ed25519(
@@ -274,7 +278,11 @@ def check_keyfiles_ed25519(filename):
   if private_key_data != private_key_data2:
     raise ValueError('Unexpected build private output.')
 
-  public_key_data = open(filename + '.pub').read()
+  f = open(filename + '.pub')
+  try:
+    public_key_data = f.read()
+  finally:
+    f.close()
   public_key2, comment2 = parse_openssh_public_key_ed25519(
       public_key_data)
   public_key_data2 = build_openssh_public_key_ed25519(
@@ -288,7 +296,11 @@ def check_keyfiles_ed25519(filename):
 
 
 def check_public_keyfile_ed25519(filename_pub):
-  public_key_data = open(filename_pub).read()
+  f = open(filename_pub)
+  try:
+    public_key_data = f.read()
+  finally:
+    f.close()
   public_key2, comment2 = parse_openssh_public_key_ed25519(
       public_key_data)
   public_key_data2 = build_openssh_public_key_ed25519(
