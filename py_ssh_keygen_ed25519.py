@@ -278,13 +278,23 @@ def check_keyfiles_ed25519(filename):
   public_key2, comment2 = parse_openssh_public_key_ed25519(
       public_key_data)
   public_key_data2 = build_openssh_public_key_ed25519(
-      public_key2, comment)
+      public_key2, comment2)
   if public_key_data != public_key_data2:
     raise ValueError('Unexpected build public output.')
   if public_key2 != public_key:
     raise ValueError('Public key mismatch in two files.')
   if comment2 != comment:
     raise ValueError('Public key mismatch in two files.')
+
+
+def check_public_keyfile_ed25519(filename_pub):
+  public_key_data = open(filename_pub).read()
+  public_key2, comment2 = parse_openssh_public_key_ed25519(
+      public_key_data)
+  public_key_data2 = build_openssh_public_key_ed25519(
+      public_key2, comment2)
+  if public_key_data != public_key_data2:
+    raise ValueError('Unexpected build public output.')
 
 
 def generate_random_bytes(size):
@@ -327,9 +337,11 @@ def main(argv):
   if len(argv) > 1 and argv[1] == '--check':
     for filename in argv[2:]:
       if filename.endswith('.pub'):
-        continue
-      print >>sys.stderr, 'info: checking keyfiles: %s' % filename
-      check_keyfiles_ed25519(filename)
+        print >>sys.stderr, 'info: checking public keyfile: %s' % filename
+        check_public_keyfile_ed25519(filename)
+      else:
+        print >>sys.stderr, 'info: checking keyfiles: %s' % filename
+        check_keyfiles_ed25519(filename)
     return
 
   try:
