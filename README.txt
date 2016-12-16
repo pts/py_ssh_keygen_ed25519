@@ -1,5 +1,5 @@
-py_ssh_keygen_ed25519: ssh-keygen for ed25519 keypairs
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+py_ssh_keygen_ed25519: ssh-keygen for ed25519 keypairs in Pure Python
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 py_ssh_keygen_ed25519 is a command-line tool implemented in Python for
 generating unencrypted ed25519 keypairs (public and private keys) to be
 used with OpenSSH. It's also a validator for such files.
