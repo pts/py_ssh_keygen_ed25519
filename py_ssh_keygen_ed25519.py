@@ -1,11 +1,34 @@
 #! /usr/bin/python
 # by pts@fazekas.hu at Thu Dec 15 14:36:25 CET 2016
-#
-# https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.key
-#
+
+""":" #py_ssh_keygen_ed25519: ssh-keygen for ed25519 keypairs.
+
+type python2.7 >/dev/null 2>&1 && exec python2.7 -- "$0" ${1+"$@"}
+type python2.6 >/dev/null 2>&1 && exec python2.6 -- "$0" ${1+"$@"}
+type python2.5 >/dev/null 2>&1 && exec python2.5 -- "$0" ${1+"$@"}
+type python2.4 >/dev/null 2>&1 && exec python2.4 -- "$0" ${1+"$@"}
+exec python -- ${1+"$@"}; exit 1
+
+py_ssh_keygen_ed25519 is a command-line tool implemented in Python for
+generating unencrypted ed25519 keypairs (public and private keys) to be
+used with OpenSSH. It's also a validator for such files.
+
+py_ssh_keygen_ed25519 runs on Python 2.4 (with the external hashlib module
+installed), 2.5, 2.6 and 2.7. It doesn't work with Python 3.x. All other
+crypto primitives are built in
+
+Usage for keypair generation (as a replacement for ssh-keygen):
+
+  py_ssh_keygen_ed22159.py -t ed2215 -f <outfile> [-C <comment>]
+
+Usage for keypair file verification:
+
+  py_ssh_keygen_ed22159.py --check [<filename> ...]
+"""
 
 import base64
 import hashlib  # Needs `easy_install hashlib' on Python 2.4.
+import os
 import re
 import struct
 import sys
@@ -15,12 +38,18 @@ import sys
 # Based on: https://github.com/pyca/ed25519/blob/master/ed25519.py
 #
 
-def get_ed25519_public_key_unsafe(private_key, _bpow=[]):
+def get_public_key_ed25519_unsafe(private_key, _bpow=[]):
   """Computes the public key from the private key.
 
   Not safe to use with secret keys or secret data.
-  TODO(pts): Copy-paste why.
-  
+  The root of the problem is that Python's long-integer arithmetic is
+  not designed for use in cryptography.  Specifically, it may take more
+  or less time to execute an operation depending on the values of the
+  inputs, and its memory access patterns may also depend on the inputs.
+  This opens it to timing and cache side-channel attacks which can
+  disclose data to an attacker.  We rely on Python's long-integer
+  arithmetic, so we cannot handle secrets without risking their disclosure.
+
   Implementation based on:
   https://github.com/pyca/ed25519/blob/master/ed25519.py
   """
@@ -30,8 +59,8 @@ def get_ed25519_public_key_unsafe(private_key, _bpow=[]):
   # Constants inlined.
   e = ((1 << 254) | (int(h[::-1].encode('hex'), 16) & ~(7 | 1 << 255))) % (
       (1 << 252) + 0x14def9dea2f79cd65812631a5cf5d3ed)
-  q = (1 << 255) - 19
-  if not _bpow:
+  q = (1 << 255) - 19  # A prime.
+  if not _bpow:  # Compute it only for the first time.
     _bpow.append((
         0x216936d3cd6e53fec0a4e231fdd6dc5c692cc7609525a7b2c9562d608f25d51a,
         0x6666666666666666666666666666666666666666666666666666666666666658, 1,
@@ -40,72 +69,26 @@ def get_ed25519_public_key_unsafe(private_key, _bpow=[]):
       # This is formula sequence 'dbl-2008-hwcd' from
       # http://www.hyperelliptic.org/EFD/g1p/auto-twisted-extended-1.html
       x1, y1, z1, t1 = _bpow[-1]
-      a = x1 * x1 % q
-      b = y1 * y1 % q
-      c = ((z1 * z1) << 1) % q
-      hh = -a - b  # dd - b
-      ee = ((x1 + y1) * (x1 + y1) + hh) % q
-      g = -a + b  # dd + b
-      f = g - c
+      a, b, c = x1 * x1 % q, y1 * y1 % q, ((z1 * z1) << 1) % q
+      hh, g = -a - b, b - a
+      ee, f = ((x1 + y1) * (x1 + y1) + hh) % q, g - c
       _bpow.append((ee * f % q, g * hh % q, f * g % q, ee * hh % q))
   x, y, z, t = 0, 1, 1, 0
+  m = 0xa406d9dc56dffce7198e80f2eef3d13000e0149a8283b156ebd69b9426b2f146
   for i in xrange(253):
     if e & 1:
       # This is formula sequence 'addition-add-2008-hwcd-3' from
       # http://www.hyperelliptic.org/EFD/g1p/auto-twisted-extended-1.html
       x2, y2, z2, t2 = _bpow[i]
-      a = (y - x) * (y2 - x2) % q
-      b = (y + x) * (y2 + x2) % q
-      c = t * 0xa406d9dc56dffce7198e80f2eef3d13000e0149a8283b156ebd69b9426b2f146 % q * t2 % q
-      dd = ((z * z2) << 1) % q
-      ee = b - a
-      f = dd - c
-      g = dd + c
-      hh = b + a
-      x, y, z, t = (ee * f % q, g * hh % q, f * g % q, ee * hh % q)
+      a, b = (y - x) * (y2 - x2) % q, (y + x) * (y2 + x2) % q
+      c, dd = t * m % q * t2 % q, ((z * z2) << 1) % q
+      ee, f, g, hh = b - a, dd - c, dd + c, b + a
+      x, y, z, t = ee * f % q, g * hh % q, f * g % q, ee * hh % q
     e >>= 1
-
-  def pow2(x, p):
-    """== pow(x, 1 << p, q)"""  # TODO(pts): Which one is faster?
-    while p > 0:
-      x = x * x % q
-      p -= 1
-    return x
-
-  # z= z^{-1} \mod q$, for z != 0.
-  # Adapted from curve25519_athlon.c in djb's Curve25519.
-  #z2 = z * z % q
-  #z4 = z2 * z2 % q
-  #z9 = z4 * z % q
-  #z11 = z9 * z2 % q
-  #z2_5 = (z11 * z11) % q * z9 % q
-  #z2_10 = pow2(z2_5, 5) * z2_5 % q
-  #z2_20 = pow2(z2_10, 10) * z2_10 % q
-  #z2_40 = pow2(z2_20, 20) * z2_20 % q
-  #z2_50 = pow2(z2_40, 10) * z2_10 % q
-  #z2_100 = pow2(z2_50, 50) * z2_50 % q
-  #z2_200 = pow2(z2_100, 100) * z2_100 % q
-  #z2_250 = pow2(z2_200, 50) * z2_50 % q
-  #zi = pow2(z2_250, 5) * z11 % q  # 2^255 - 2^5 + 11 = q - 2
-  #assert zi == pow(z, pow(2, (q - 2), 57896044618658097711785492504343953926634992332820282019728792003956564819948), q)
-  #print z * zi % q
-  #assert z * zi % q == 1
-  z2 = z * z % q                                # 2
-  z9 = pow2(z2, 2) * z % q                      # 9
-  z11 = z9 * z2 % q                             # 11
-  z2_5_0 = (z11 * z11) % q * z9 % q             # 31 == 2^5 - 2^0
-  z2_10_0 = pow2(z2_5_0, 5) * z2_5_0 % q        # 2^10 - 2^0
-  z2_20_0 = pow2(z2_10_0, 10) * z2_10_0 % q     # ...
-  z2_40_0 = pow2(z2_20_0, 20) * z2_20_0 % q
-  z2_50_0 = pow2(z2_40_0, 10) * z2_10_0 % q
-  z2_100_0 = pow2(z2_50_0, 50) * z2_50_0 % q
-  z2_200_0 = pow2(z2_100_0, 100) * z2_100_0 % q
-  z2_250_0 = pow2(z2_200_0, 50) * z2_50_0 % q   # 2^250 - 2^0
-  zi = pow2(z2_250_0, 5) * z11 % q            # 2^255 - 2^5 + 11 = q - 2
-
-
+  zi = pow(z, q - 2, q)  # Modular inverse could be computed 16% faster.
   x, y = (x * zi) % q, (y * zi) % q
   return ('%064x' % (y & ~(1 << 255) | ((x & 1) << 255))).decode('hex')[::-1]
+
 
 # ---
 
@@ -127,8 +110,10 @@ def parse_lenu32str(data, i):
   return parse_fixed(data, *parse_u32(data, i))
 
 
-def parse_openssh_private_key_ed22519(data):
+def parse_openssh_private_key_ed25519(data):
   """Returns (public_key, comment, private_key, checkstr)."""
+  # Based on:
+  # https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.key
   if not data.startswith('-----BEGIN OPENSSH PRIVATE KEY-----\n'):
     raise ValueError('Missing OPENSSH PRIVATE KEY.')
   i = data.find('\n')
@@ -159,7 +144,7 @@ def parse_openssh_private_key_ed22519(data):
   j = 0
   j, public_key_type = parse_lenu32str(public_key_desc, j)
   if public_key_type != 'ssh-ed25519':
-    raise ValueError('Expected public key type: ssh-ed22519')
+    raise ValueError('Expected public key type: ssh-ed25519')
   j, public_key = parse_lenu32str(public_key_desc, j)
   if len(public_key) != 32:
     raise ValueError('Expected public key size: 32')
@@ -178,7 +163,7 @@ def parse_openssh_private_key_ed22519(data):
     raise ValueError('checkint value mismatch.')
   j, private_key_type = parse_lenu32str(private_key_desc, j)
   if private_key_type != 'ssh-ed25519':
-    raise ValueError('Expected private key type: ssh-ed22519')
+    raise ValueError('Expected private key type: ssh-ed25519')
   j, public_key2 = parse_lenu32str(private_key_desc, j)
   if public_key != public_key2:
     raise ValueError('Mismatch in public_key.')
@@ -189,17 +174,20 @@ def parse_openssh_private_key_ed22519(data):
     raise ValueError('Private key does not match public key.')
   private_key = private_key[:32]
   j, comment = parse_lenu32str(private_key_desc, j)
+  if '\n' in comment or '\n' in comment:
+    # Newline can't be present in the corresponding public key.
+    raise ValueError('Comment contains newline.')
   if j + 8 <= len(private_key_desc):
     raise ValueError('Private key padding too long.')
   if private_key_desc[j:] != ''.join(
       chr(k) for k in xrange(1, 1 + len(private_key_desc) - j)):
     raise ValueError('Unexpected padding value.')
-  if public_key != get_ed25519_public_key_unsafe(private_key):
+  if public_key != get_public_key_ed25519_unsafe(private_key):
     raise ValueError('Public key and private key do not match.')
   return public_key, comment, private_key, checkstr1
 
 
-def build_openssh_private_key_ed22519(public_key, comment, private_key,
+def build_openssh_private_key_ed25519(public_key, comment, private_key,
                                       checkstr):
   for value in (public_key, comment, private_key, checkstr):
     if not isinstance(value, str):
@@ -211,17 +199,18 @@ def build_openssh_private_key_ed22519(public_key, comment, private_key,
   elif len(private_key) != 32:
     raise ValueError('Expected private key size: 32 or 64')
   if not public_key:
-    public_key = get_ed25519_public_key_unsafe(private_key)
+    public_key = get_public_key_ed25519_unsafe(private_key)
     assert len(public_key) == 32
   else:
     if len(public_key) != 32:
       raise ValueError('Expected public key size: 32')
-    if public_key != get_ed25519_public_key_unsafe(private_key):
+    if public_key != get_public_key_ed25519_unsafe(private_key):
       raise ValueError('Public key and private key do not match.')
   if len(checkstr) != 4:
     raise ValueError('Expected checkstr size: 4')
-  # TODO(pts): Check '\r' not in comment and '\n' not in comment (for *.pub).
-
+  if '\n' in comment or '\n' in comment:
+    # Newline can't be present in the corresponding public key.
+    raise ValueError('Comment contains newline.')
 
   data = base64.b64encode(''.join((  # No newlines.
       'openssh-key-v1\0\0\0\0\4none\0\0\0\4none\0\0\0\0\0\0\0\1\0\0\0\x33'
@@ -238,7 +227,7 @@ def build_openssh_private_key_ed22519(public_key, comment, private_key,
   return ''.join(output)
 
 
-def parse_openssh_public_key_ed22519(data):
+def parse_openssh_public_key_ed25519(data):
   """Returns (public_key, comment)."""
   data = data.rstrip('\r\n')
   if '\n' in data or '\r' in data:
@@ -248,7 +237,7 @@ def parse_openssh_public_key_ed22519(data):
   except ValueError:
     raise ValueError('Not enough fields.')
   if key_type != 'ssh-ed25519':
-    raise ValueError('Expected key type: ssh-ed22519')
+    raise ValueError('Expected key type: ssh-ed25519')
   try:
     public_key_desc = base64.b64decode(encoded)
   except ValueError:
@@ -256,7 +245,7 @@ def parse_openssh_public_key_ed22519(data):
   j = 0
   j, public_key_type = parse_lenu32str(public_key_desc, j)
   if public_key_type != 'ssh-ed25519':
-    raise ValueError('Expected public key type: ssh-ed22519')
+    raise ValueError('Expected public key type: ssh-ed25519')
   j, public_key = parse_lenu32str(public_key_desc, j)
   if len(public_key) != 32:
     raise ValueError('Expected public key size: 32')
@@ -265,7 +254,7 @@ def parse_openssh_public_key_ed22519(data):
   return public_key, comment
 
 
-def build_openssh_public_key_ed22519(public_key, comment):
+def build_openssh_public_key_ed25519(public_key, comment):
   for value in (public_key, comment):
     if not isinstance(value, str):
       raise TypeError
@@ -276,25 +265,132 @@ def build_openssh_public_key_ed22519(public_key, comment):
       comment)
 
 
+def check_keyfiles_ed25519(filename):
+  private_key_data = open(filename).read()
+  public_key, comment, private_key, checkstr = (
+      parse_openssh_private_key_ed25519(private_key_data))
+  private_key_data2 = build_openssh_private_key_ed25519(
+      public_key, comment, private_key, checkstr)
+  if private_key_data != private_key_data2:
+    raise ValueError('Unexpected build private output.')
+
+  public_key_data = open(filename + '.pub').read()
+  public_key2, comment2 = parse_openssh_public_key_ed25519(
+      public_key_data)
+  public_key_data2 = build_openssh_public_key_ed25519(
+      public_key2, comment)
+  if public_key_data != public_key_data2:
+    raise ValueError('Unexpected build public output.')
+  if public_key2 != public_key:
+    raise ValueError('Public key mismatch in two files.')
+  if comment2 != comment:
+    raise ValueError('Public key mismatch in two files.')
+
+
+def generate_random_bytes(size):
+  try:
+    return os.urandom(size)
+  except (OSError, AttributeError, NotImplementedError), e:
+    import random
+    # `random' isn't cryptographically secure, it's unsafe.
+    return ''.join(chr(random.randrange(0, 256)) for _ in xrange(size))
+
+
+def generate_key_pair_ed25519():
+  private_key = generate_random_bytes(32)
+  public_key = get_public_key_ed25519_unsafe(private_key)
+  return public_key, private_key
+
+
+class ArgumentError(Exception):
+  """Raised when invalid command-line arguments are specified."""
+
+
+def get_module_docstring():
+  return __doc__
+
+
+def get_doc(doc=None):
+  if doc is None:
+    doc = get_module_docstring()
+  doc = doc.rstrip()
+  doc = re.sub(r'\A:"\s*#', '', doc, 1)
+  doc = re.sub(r'\n(\ntype python.*)+\nexec python -- .*', '', doc, 1)
+  return doc
+
+
 def main(argv):
-  for filename in argv[1:]:
-    if filename.endswith('.pub'):
-      continue
-    print >>sys.stderr, 'info: trying: %s' % filename
+  if len(argv) < 2 or argv[1] == '--help':
+    print get_doc()
+    sys.exit(0)
 
-    data = open(filename).read()
-    args = parse_openssh_private_key_ed22519(data)
-    print args
-    data2 = build_openssh_private_key_ed22519(*args)
-    if data != data2:
-      raise ValueError('Unexpected build private output.')
+  if len(argv) > 1 and argv[1] == '--check':
+    for filename in argv[2:]:
+      if filename.endswith('.pub'):
+        continue
+      print >>sys.stderr, 'info: checking keyfiles: %s' % filename
+      check_keyfiles_ed25519(filename)
+    return
 
-    data = open(filename + '.pub').read()
-    args = parse_openssh_public_key_ed22519(data)
-    print args
-    data2 = build_openssh_public_key_ed22519(*args)
-    if data != data2:
-      raise ValueError('Unexpected build public output.')
+  try:
+    filename = comment = key_type = None
+    i = 1
+    while i < len(argv):
+      arg = argv[i]
+      i += 1
+      if arg == '--':
+        break
+      if arg == '-' or not arg.startswith('-'):
+        i -= 1
+        break
+      if arg == '-t' and i < len(argv):
+        key_type = argv[i]
+        i += 1
+      elif arg == '-f' and i < len(argv):
+        filename = argv[i]
+        i += 1
+      elif arg == '-C' and i < len(argv):
+        comment = argv[i]
+        i += 1
+      else:
+        raise ArgumentError('Unknown flag: %s' % arg)
+    if i != len(argv):
+      raise ArgumentError('Too many command-line arguments.')
+    if key_type is None:
+      raise ArgumentError('Please specify: -t ed25519')
+    if filename is None:
+      raise ArgumentError('Please specify: -f <output-file>')
+  except ArgumentError, e:
+    print >>sys.stderr, '%s\n\nerror: %s' % (get_doc(), e)
+    sys.exit(1)
+
+  if comment is None:
+    import getpass
+    import socket
+    comment = '%s@%s' % (getpass.getuser(), socket.gethostname())
+  public_key, private_key = generate_key_pair_ed25519()
+  checkstr = generate_random_bytes(4)
+  private_key_data = build_openssh_private_key_ed25519(
+      public_key, comment, private_key, checkstr)
+  # Unlike ssh-keygen, we overwrite files unconditionally.
+  os.remove(filename)
+  f = open(filename, 'wb')
+  try:
+    os.chmod(filename, 0600)
+  except (OSError, AttributeError, NotImplementedError):
+    pass
+  try:
+    f.write(private_key_data)
+  finally:
+    f.close()
+  public_key_data = build_openssh_public_key_ed25519(
+      public_key, comment)
+  f = open(filename + '.pub', 'wb')
+  try:
+    f.write(public_key_data)
+  finally:
+    f.close()
+  check_keyfiles_ed25519(filename)  # Just double check.
 
 
 if __name__ == '__main__':
