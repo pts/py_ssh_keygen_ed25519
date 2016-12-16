@@ -397,7 +397,10 @@ def main(argv):
   private_key_data = build_openssh_private_key_ed25519(
       public_key, comment, private_key, checkstr)
   # Unlike ssh-keygen, we overwrite files unconditionally.
-  os.remove(filename)
+  try:
+    os.remove(filename)
+  except OSError, e:
+    pass
   f = open(filename, 'wb')
   try:
     os.chmod(filename, 0600)
