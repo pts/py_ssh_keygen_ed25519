@@ -6,7 +6,7 @@ used with OpenSSH. It's also a validator for such files.
 
 py_ssh_keygen_ed25519 runs on Python 2.4 (with the external hashlib module
 installed), 2.5, 2.6 and 2.7. It doesn't work with Python 3.x. All other
-crypto primitives are built in
+crypto primitives are built in.
 
 Usage for keypair generation (as a replacement for ssh-keygen):
 
