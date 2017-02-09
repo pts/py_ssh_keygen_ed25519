@@ -16,4 +16,7 @@ Usage for keypair file verification:
 
   py_ssh_keygen_ed25519.py --check [<filename> ...]
 
+For an alternative self-contained implementation in standard C, see
+https://github.com/pts/tiny-ssh-keygen-ed25519
+
 __END__
