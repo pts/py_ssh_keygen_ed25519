@@ -17,20 +17,9 @@
 import hashlib
 
 
-def indexbytes(buf, i):
-  return ord(buf[i])
-
-def intlist2bytes(l):
-  return b''.join(chr(c) for c in l)
-
-b = 256
-q = 2 ** 255 - 19
-l = 2 ** 252 + 27742317777372353535851937790883648493
-
-
-def H(m):
-  return hashlib.sha512(m).digest()
-
+# !! TODO(pts): Inline hex constants.
+q = (1 << 255) - 19
+ll = (1 << 252) + 27742317777372353535851937790883648493
 
 #d = -121665 * inv(121666) % q
 d = 37095705934669439343138083508754565189542113879843219016388785533085940283555
@@ -40,22 +29,20 @@ I = 1968116137670750595680707930498854201544606651592389016274402107312382978475
 
 def xrecover(y):
   xx = (y * y - 1) * pow(d * y * y + 1, q - 2, q)
-  x = pow(xx, (q + 3) // 8, q)
-
+  x = pow(xx, (q + 3) >> 3, q)
   if (x * x - xx) % q != 0:
     x = (x * I) % q
-
-  if x % 2 != 0:
-    x = q-x
-
+  if x & 1:
+    x = q - x
   return x
 
 
 #By = 4 * inv(5)
 By = 46316835694926478169428394003475163141307993866256225615783033603165251855960
-Bx = xrecover(By)
-B = (Bx % q, By % q, 1, (Bx * By) % q)
-ident = (0, 1, 1, 0)
+#Bx = xrecover(By)
+Bx = 15112221349535400772501151409588531511454012693041857206046113283949847762202
+B = (Bx, By, 1, (Bx * By) % q)
+del Bx, By
 
 
 def edwards_add(P, Q):
@@ -66,8 +53,8 @@ def edwards_add(P, Q):
 
   a = (y1-x1)*(y2-x2) % q
   b = (y1+x1)*(y2+x2) % q
-  c = t1*2*d*t2 % q
-  dd = z1*2*z2 % q
+  c = (t1<<1)*d*t2 % q
+  dd = (z1<<1)*z2 % q
   e = b - a
   f = dd - c
   g = dd + c
@@ -87,7 +74,7 @@ def edwards_double(P):
 
   a = x1*x1 % q
   b = y1*y1 % q
-  c = 2*z1*z1 % q
+  c = (z1<<1)*z1 % q
   # dd = -a
   e = ((x1+y1)*(x1+y1) - a - b) % q
   g = -a + b  # dd + b
@@ -103,15 +90,15 @@ def edwards_double(P):
 
 def scalarmult(P, e):
   if e == 0:
-    return ident
-  Q = scalarmult(P, e // 2)
+    return 0, 1, 1, 0
+  Q = scalarmult(P, e >> 1)
   Q = edwards_double(Q)
   if e & 1:
     Q = edwards_add(Q, P)
   return Q
 
 
-# Bpow[i] == scalarmult(B, 2**i)
+# Bpow[i] == scalarmult(B, 1 << i)
 Bpow = []
 
 
@@ -123,125 +110,93 @@ def make_Bpow():
 make_Bpow()
 
 
+# !! How much faster is this?
 def scalarmult_B(e):
-  """
-  Implements scalarmult(B, e) more efficiently.
-  """
-  # scalarmult(B, l) is the identity
-  e = e % l
-  P = ident
+  """Implements scalarmult(B, e) more efficiently."""
+  # scalarmult(B, l) is the identity.
+  e %= ll
+  P = 0, 1, 1, 0
   for i in xrange(253):
     if e & 1:
       P = edwards_add(P, Bpow[i])
-    e = e // 2
+    e >>= 1
   assert e == 0, e
   return P
 
 
-def encodeint(y):
-  bits = [(y >> i) & 1 for i in xrange(256)]
-  return ''.join([
-    chr(sum([bits[i * 8 + j] << j for j in xrange(8)]))
-    for i in xrange(32)
-  ])
-
-
 def encodepoint(P):
-  (x, y, z, t) = P
+  x, y, z, t = P
   zi = pow(z, q - 2, q)
   x = (x * zi) % q
   y = (y * zi) % q
   bits = [(y >> i) & 1 for i in xrange(255)] + [x & 1]
-  return ''.join([
-    chr(sum([bits[i * 8 + j] << j for j in xrange(8)]))
-    for i in xrange(32)])
-
-
-def bit(h, i):
-  return (indexbytes(h, i // 8) >> (i % 8)) & 1
+  return ''.join(
+      chr(sum([bits[i * 8 + j] << j for j in xrange(8)]))
+      for i in xrange(32))
 
 
 def publickey_unsafe(sk):
-  """
-  Not safe to use with secret keys or secret data.
-
-  See module docstring.  This function should be used for testing only.
-  """
-  h = H(sk)
-  a = 2 ** (b - 2) + sum(2 ** i * bit(h, i) for i in xrange(3, b - 2))
-  A = scalarmult_B(a)
-  return encodepoint(A)
+  h = hashlib.sha512(sk).digest()  # 64 bytes.
+  a = (1 << 254) + sum((1 << i) * ((ord(h[i >> 3]) >> (i % 8)) & 1) for i in xrange(3, 254))  # !!
+  return encodepoint(scalarmult_B(a))
 
 
-def Hint(m):
-  h = H(m)
-  return sum(2 ** i * bit(h, i) for i in xrange(2 * b))
+def gint(h):
+  assert len(h) in (32, 64)
+  #return sum((1 << i) * ((ord(h[i >> 3]) >> (i % 8)) & 1) for i in xrange(512))
+  #return sum(((ord(h[i >> 3]) >> (i % 8)) & 1) << i for i in xrange(512))
+  #return sum(ord(h[i]) << (i << 3) for i in xrange(64))
+  return int(h[::-1].encode('hex'), 16)
 
 
 def signature_unsafe(m, sk, pk):
-  """
-  Not safe to use with secret keys or secret data.
-
-  See module docstring.  This function should be used for testing only.
-  """
-  h = H(sk)
-  a = 2 ** (b - 2) + sum(2 ** i * bit(h, i) for i in xrange(3, b - 2))
-  r = Hint(
-    intlist2bytes([indexbytes(h, j) for j in xrange(32, 64)]) + m
-  )
+  h = hashlib.sha512(sk).digest()  # 64 bytes.
+  a = (1 << 254) + sum((1 << i) * ((ord(h[i >> 3]) >> (i % 8)) & 1) for i in xrange(3, 254))  # !!
+  # TODO(pts): Compute hash without concatenation.
+  r = gint(hashlib.sha512(h[32 : 64] + m).digest())
   R = scalarmult_B(r)
-  S = (r + Hint(encodepoint(R) + pk + m) * a) % l
-  return encodepoint(R) + encodeint(S)
+  # TODO(pts): Compute hash without concatenation.
+  S = (r + gint(hashlib.sha512(encodepoint(R) + pk + m).digest()) * a) % ll
+  return encodepoint(R) + ('%0128x' % S).decode('hex')[:-33:-1]
 
 
 def verify(s, m, pk):
-  """
-  Not safe to use when any argument is secret.
-
-  See module docstring.  This function should be used only for
-  verifying public signatures of public messages.
-  """
   if len(s) != 64:
-    raise ValueError("signature length is wrong")
+    raise ValueError('Bad signature length.')
 
   if len(pk) != 32:
-    raise ValueError("public-key length is wrong")
+    raise ValueError('Bad public key length.')
 
-  def isoncurve(P):
-    (x, y, z, t) = P
-    return (z % q != 0 and
+  def isoncurve(x, y, z, t):
+    return (z % q and
         x*y % q == z*t % q and
         (y*y - x*x - z*z - d*t*t) % q == 0)
 
-  def decodeint(s):
-    return sum(2 ** i * bit(s, i) for i in xrange(0, b))
-
-  def decodepoint(s):
-    y = sum(2 ** i * bit(s, i) for i in xrange(0, b - 1))
+  def decodepoint(h):
+    y = sum((1 << i) * ((ord(h[i >> 3]) >> (i % 8)) & 1) for i in xrange(255))  # !!
     x = xrecover(y)
-    if x & 1 != bit(s, b-1):
+    if x & 1 != ((ord(h[255 >> 3]) >> (255 % 8)) & 1):  # !!
       x = q - x
-    P = (x, y, 1, (x*y) % q)
-    if not isoncurve(P):
-      return ''
-    return P
+    return x, y, 1, (x * y) % q
 
   R = decodepoint(s[:32])
-  if not R:
+  if not isoncurve(*R):
     return False
   A = decodepoint(pk)
-  if not A:
+  if not isoncurve(*A):
     return False
-  S = decodeint(s[32 : 64])
-  h = Hint(encodepoint(R) + pk + m)
+  # TODO(pts): Compute hash without concatenation.
+  h = gint(hashlib.sha512(encodepoint(R) + pk + m).digest())
 
-  x1, y1, z1, t1 = P = scalarmult_B(S)
+  x1, y1, z1, t1 = P = scalarmult_B(gint(s[32 : 64]))
   x2, y2, z2, t2 = Q = edwards_add(R, scalarmult(A, h))
 
-  return not (not isoncurve(P) or not isoncurve(Q) or
+  return not (not isoncurve(*P) or not isoncurve(*Q) or
      (x1*z2 - x2*z1) % q != 0 or (y1*z2 - y2*z1) % q != 0)
 
+
 # ---
+
 
 def check():
   hsk = 'e71fa86cb7a2bfd638ea082ad1f364f8702f49b44009f43f523244a621e4e9b0'.decode('hex')
