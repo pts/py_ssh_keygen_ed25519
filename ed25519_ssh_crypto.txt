@@ -16,6 +16,8 @@ Crypto primitives:
 ** Implemented in tinyssh as crypto_sign_ed25519_tinynacl_keypair.
 *** The output pk is 32 bytes containing the public key.
 *** The output sk is 64 bytes containing the secret key, then the public key.
+** Implemented in pure Python in function publickey in
+   https://github.com/pts/py_ssh_keygen_ed25519/blob/master/ed25519_compact.py
 ** Examples:
 *** hsk: server host secret key, 32 bytes, example: 'e71fa86cb7a2bfd638ea082ad1f364f8702f49b44009f43f523244a621e4e9b0'.decode('hex')
 *** hpk: server host public key, 32 bytes, example: '7df9f38e692271c670530dea40b7bfb08fc07c54ed62998a55d78b9a3f2c6971'.decode('hex')
@@ -39,6 +41,8 @@ Crypto primitives:
     the secret key, then comes the public key.
 *** The output s is returned as sm[:64], where sm[64 : 64 + n] is a copy of the
     input message.
+** Implemented in pure Python in function sign in
+   https://github.com/pts/py_ssh_keygen_ed25519/blob/master/ed25519_compact.py
 ** Test vectors:
 *** 'a12bf2f69c555868561b592a677e227eb31622d4a4bc7b6efaf677720c1a61c6159ae7906ee16777fda64bfd024a80d5bc8cb7d534abe033669d10352c3def08'.decode('hex') == sign('cf32122409544fd680c272ea2756a5fe37d0b0c8a11d092f1bfa4720f7ac3993'.decode('hex'), 'e71fa86cb7a2bfd638ea082ad1f364f8702f49b44009f43f523244a621e4e9b07df9f38e692271c670530dea40b7bfb08fc07c54ed62998a55d78b9a3f2c6971'.decode('hex'))
 *** 'cd74452de0885b833b948060277660ddd4b9635fc4e785f5bc7180202759514c3f587e5b7c18ebcb442325e7f2c451b7876874b04139b5a854edf77b69037404'.decode('hex') == sign('cdcdeee839089f79fb969a298c0f7dc35ff091556b9bb4b5e4726ad49ac73ec3'.decode('hex'), 'e71fa86cb7a2bfd638ea082ad1f364f8702f49b44009f43f523244a621e4e9b07df9f38e692271c670530dea40b7bfb08fc07c54ed62998a55d78b9a3f2c6971'.decode('hex'))
@@ -57,6 +61,8 @@ Crypto primitives:
 *** The return value is 0 iff the verification was successful.
 *** It also copies m (sm[64 : smlen - 64]) to the ouput memory buffer
     m[:smlen -64].
+** Implemented in pure Python in function verify in
+   https://github.com/pts/py_ssh_keygen_ed25519/blob/master/ed25519_compact.py
 ** Test vectors:
 *** True == verify('92828b0e28ae91e25f7e8db64228a925378ba5137831ee7220355037ea02568a3de3de03f4301a5e29338e04f34c9e77b7af7958acdcdc15762d8334e02c0000'.decode('hex'), '00000020cf32122409544fd680c272ea2756a5fe37d0b0c8a11d092f1bfa4720f7ac39933200000004707473380000000e7373682d636f6e6e656374696f6e000000097075626c69636b6579010000000b7373682d65643235353139000000330000000b7373682d6564323535313900000020d767e033fc0e3df5ebe688e554614068e1e825990dd212939efa26e9f6973e8d'.decode('hex'), 'd767e033fc0e3df5ebe688e554614068e1e825990dd212939efa26e9f6973e8d'.decode('hex'))
 *** True == verify('408343d3abf46daaa6112b5e8ca6d9e238343090816cf40bc8370aaa73936995ad2db80373fd66fa87f2a2338a3a3220bdcdde3c4dc3e4137c5d45177eec360b'.decode('hex'), '00000020cdcdeee839089f79fb969a298c0f7dc35ff091556b9bb4b5e4726ad49ac73ec33200000004707473380000000e7373682d636f6e6e656374696f6e000000097075626c69636b6579010000000b7373682d65643235353139000000330000000b7373682d6564323535313900000020d767e033fc0e3df5ebe688e554614068e1e825990dd212939efa26e9f6973e8d'.decode('hex'), 'd767e033fc0e3df5ebe688e554614068e1e825990dd212939efa26e9f6973e8d'.decode('hex'))
