@@ -18,31 +18,19 @@ import hashlib
 
 
 # !! TODO(pts): Inline hex constants.
-q = (1 << 255) - 19
-ll = (1 << 252) + 27742317777372353535851937790883648493
-
-#d = -121665 * inv(121666) % q
-d = 37095705934669439343138083508754565189542113879843219016388785533085940283555
+ql = (1 << 255) - 19
+ll = (1 << 252) | 0x14def9dea2f79cd65812631a5cf5d3ed
+dl = 0x52036cee2b6ffe738cc740797779e89800700a4d4141d8ab75eb4dca135978a3
 
 
-#By = 4 * inv(5)
-By = 46316835694926478169428394003475163141307993866256225615783033603165251855960
-#Bx = xrecover(By)
-Bx = 15112221349535400772501151409588531511454012693041857206046113283949847762202
-B = (Bx, By, 1, (Bx * By) % q)
-del Bx, By
-
-
-def edwards_add(P, Q):
-  # This is formula sequence 'addition-add-2008-hwcd-3' from
-  # http://www.hyperelliptic.org/EFD/g1p/auto-twisted-extended-1.html
+def _edwards_add(P, Q):
   # !! TODO(pts): Make it shorter.
   x1, y1, z1, t1 = P
   x2, y2, z2, t2 = Q
-  a = (y1-x1)*(y2-x2) % q
-  b = (y1+x1)*(y2+x2) % q
-  c = (t1<<1)*d*t2 % q
-  dd = (z1<<1)*z2 % q
+  a = (y1-x1)*(y2-x2) % ql
+  b = (y1+x1)*(y2+x2) % ql
+  c = (t1<<1)*dl*t2 % ql
+  dd = (z1<<1)*z2 % ql
   e = b - a
   f = dd - c
   g = dd + c
@@ -51,19 +39,17 @@ def edwards_add(P, Q):
   y3 = g*h
   t3 = e*h
   z3 = f*g
-  return (x3 % q, y3 % q, z3 % q, t3 % q)
+  return (x3 % ql, y3 % ql, z3 % ql, t3 % ql)
 
 
-def edwards_double(P):
-  # This is formula sequence 'dbl-2008-hwcd' from
-  # http://www.hyperelliptic.org/EFD/g1p/auto-twisted-extended-1.html
+def _edwards_double(P):
   # !! TODO(pts): Make it shorter.
   x1, y1, z1, t1 = P
-  a = x1*x1 % q
-  b = y1*y1 % q
-  c = (z1<<1)*z1 % q
+  a = x1*x1 % ql
+  b = y1*y1 % ql
+  c = (z1<<1)*z1 % ql
   # dd = -a
-  e = ((x1+y1)*(x1+y1) - a - b) % q
+  e = ((x1+y1)*(x1+y1) - a - b) % ql
   g = -a + b  # dd + b
   f = g - c
   h = -a - b  # dd - b
@@ -71,70 +57,62 @@ def edwards_double(P):
   y3 = g*h
   t3 = e*h
   z3 = f*g
-  return (x3 % q, y3 % q, z3 % q, t3 % q)
+  return (x3 % ql, y3 % ql, z3 % ql, t3 % ql)
 
 
-def scalarmult(P, e):
-  if e == 0:
-    return 0, 1, 1, 0
-  Q = scalarmult(P, e >> 1)
-  Q = edwards_double(Q)
-  if e & 1:
-    Q = edwards_add(Q, P)
+def _scalarmult(P, e):
+  Q, j = (0, 1, 1, 0), 1
+  while j <= e:
+    j <<= 1
+  while j > 1:
+    j >>= 1
+    Q = _edwards_double(Q)
+    if e & j:
+      Q = _edwards_add(Q, P)
   return Q
 
 
-# Bpow[i] == scalarmult(B, 1 << i)
-Bpow = []
-
-
-def make_Bpow():
-  P = B
-  for i in xrange(253):
-    Bpow.append(P)
-    P = edwards_double(P)
-make_Bpow()
-
-
-# !! How much faster is this than scalarmult(B, e)?
-def scalarmult_B(e):
-  """Implements scalarmult(B, e) more efficiently."""
-  # scalarmult(B, l) is the identity.
-  e %= ll
+def _scalarmult_B(e, _bpow=[(Bx, By, 1, (Bx * By) % ql) for Bx, By in
+    ((0x216936d3cd6e53fec0a4e231fdd6dc5c692cc7609525a7b2c9562d608f25d51a,
+     (1 << 256) // 5 * 2 - 14),)]):
+  """Implements _scalarmult(B, e) more efficiently, with an overall speed
+  increase of about 1.374 (27.22% faster)."""
+  e %= ll  # _scalarmult(B, ll) is the identity.
   P = 0, 1, 1, 0
   for i in xrange(253):
-    if e & 1:
-      P = edwards_add(P, Bpow[i])
-    e >>= 1
-  assert e == 0, e
+    if len(_bpow) <= i:
+      # _bpow[i] == _scalarmult(B, 1 << i).
+      _bpow[i:] = [_edwards_double(_bpow[i - 1])]
+    if e & (1 << i):
+      P = _edwards_add(P, _bpow[i])
   return P
+del Bx, By
 
 
-def encodepoint(x, y, z, t):
-  zi = pow(z, q - 2, q)
-  x, y = (x * zi) % q, (y * zi) % q
+def _encodepoint(x, y, z, t):
+  zi = pow(z, ql - 2, ql)
+  x, y = (x * zi) % ql, (y * zi) % ql
   return ('%064x' % (y | (x & 1) << 255)).decode('hex')[::-1]
 
 
-def gint(h):
-  return int(h[::-1].encode('hex'), 16)
-
-
-def publickey_unsafe(sk):
+def publickey(sk):
+  #if len(sk) != 32:  # Typical is 32, but we don't check.
   h = hashlib.sha512(sk).digest()  # 64 bytes.
-  a = (1 << 254) | (gint(h[:32]) & ~(7 | 1 << 255))
-  return encodepoint(*scalarmult_B(a))
+  a = (1 << 254) | (int(h[:32][::-1].encode('hex'), 16) & ~(7 | 1 << 255))
+  return _encodepoint(*_scalarmult_B(a))
 
 
-def signature_unsafe(m, sk, pk):
+def sign(m, sk, pk):
+  #if len(sk) != 32:  # Typical is 32, but we don't check.
+  if len(pk) != 32:
+    raise ValueError('Bad public key length.')
   h = hashlib.sha512(sk).digest()  # 64 bytes.
   # TODO(pts): Compute hash without concatenation.
-  r = gint(hashlib.sha512(h[32 : 64] + m).digest())
-  p = encodepoint(*scalarmult_B(r))
-  a = (1 << 254) | (gint(h[:32]) & ~(7 | 1 << 255))
+  r = int(hashlib.sha512(h[32 : 64] + m).digest()[::-1].encode('hex'), 16)
+  p = _encodepoint(*_scalarmult_B(r))
   # TODO(pts): Compute hash without concatenation.
-  S = (r + gint(hashlib.sha512(p + pk + m).digest()) * a) % ll
-  return p + ('%064x' % S).decode('hex')[:-33:-1]
+  # !! Get rid of long lines.
+  return p + ('%064x' % ((r + int(hashlib.sha512(p + pk + m).digest()[::-1].encode('hex'), 16) * ((1 << 254) | (int(h[:32][::-1].encode('hex'), 16) & ~(7 | 1 << 255)))) % ll)).decode('hex')[:-33:-1]
 
 
 def verify(s, m, pk):
@@ -144,38 +122,36 @@ def verify(s, m, pk):
     raise ValueError('Bad public key length.')
 
   def isoncurve(x, y, z, t):
-    return (z % q and
-        x*y % q == z*t % q and
-        (y*y - x*x - z*z - d*t*t) % q == 0)
+    return (z % ql and
+        x*y % ql == z*t % ql and
+        (y*y - x*x - z*z - dl*t*t) % ql == 0)
 
   def decodepoint(y):
     y1 = (y >> 255) & 1
     y &= ~(1 << 255)
-    yy = y * y % q
-    xx = (yy - 1) * pow(d * yy + 1, q - 2, q)
-    x = pow(xx, (q + 3) >> 3, q)
-    if (x * x - xx) % q != 0:
-      x = (x * 19681161376707505956807079304988542015446066515923890162744021073123829784752) % q
+    yy = y * y % ql
+    xx = (yy - 1) * pow(dl * yy + 1, ql - 2, ql)
+    x = pow(xx, (ql + 3) >> 3, ql)
+    if (x * x - xx) % ql != 0:
+      x = (x * 0x2b8324804fc1df0b2b4d00993dfbd7a72f431806ad2fe478c4ee1b274a0ea0b0) % ql
     if x & 1:
-      x = q - x
+      x = ql - x
     if x & 1 != y1:
-      x = q - x
-    return x, y, 1, (x * y) % q
+      x = ql - x
+    return x, y, 1, (x * y) % ql
 
-  R = decodepoint(gint(s[:32]))
+  R = decodepoint(int(s[:32][::-1].encode('hex'), 16))
   if not isoncurve(*R):
     return False
-  A = decodepoint(gint(pk))
+  A = decodepoint(int(pk[::-1].encode('hex'), 16))
   if not isoncurve(*A):
     return False
   # TODO(pts): Compute hash without concatenation.
-  h = gint(hashlib.sha512(encodepoint(*R) + pk + m).digest())
-
-  x1, y1, z1, t1 = P = scalarmult_B(gint(s[32 : 64]))
-  x2, y2, z2, t2 = Q = edwards_add(R, scalarmult(A, h))
-
+  x1, y1, z1, t1 = P = _scalarmult_B(int(s[32 : 64][::-1].encode('hex'), 16))
+  x2, y2, z2, t2 = Q = _edwards_add(R, _scalarmult(A, int(hashlib.sha512(
+      _encodepoint(*R) + pk + m).digest()[::-1].encode('hex'), 16)))
   return bool(isoncurve(*P) and isoncurve(*Q) and
-     (x1*z2 - x2*z1) % q == 0 and (y1*z2 - y2*z1) % q == 0)
+     (x1 * z2 - x2 * z1) % ql == 0 and (y1 * z2 - y2 * z1) % ql == 0)
 
 
 # ---
@@ -186,8 +162,8 @@ def check():
   hpk = '7df9f38e692271c670530dea40b7bfb08fc07c54ed62998a55d78b9a3f2c6971'.decode('hex')
   usk = '0a137a15eb42116cb7c3cc4727ad6d4d553c2e4a7ec326ea3472f22a42ff44cc'.decode('hex')
   upk = 'd767e033fc0e3df5ebe688e554614068e1e825990dd212939efa26e9f6973e8d'.decode('hex')
-  assert hpk == publickey_unsafe(hsk)
-  assert upk == publickey_unsafe(usk)
+  assert hpk == publickey(hsk)
+  assert upk == publickey(usk)
   def xor1(s):  # Returns s with the s[0] xored with '\1'.
     assert s
     return chr(ord(s[0]) ^ 1) + s[1:]
@@ -200,7 +176,7 @@ def check():
       ('c', '00000020cf32122409544fd680c272ea2756a5fe37d0b0c8a11d092f1bfa4720f7ac39933200000004707473380000000e7373682d636f6e6e656374696f6e000000097075626c69636b6579010000000b7373682d65643235353139000000330000000b7373682d6564323535313900000020d767e033fc0e3df5ebe688e554614068e1e825990dd212939efa26e9f6973e8d'.decode('hex'), '92828b0e28ae91e25f7e8db64228a925378ba5137831ee7220355037ea02568a3de3de03f4301a5e29338e04f34c9e77b7af7958acdcdc15762d8334e02c0000'.decode('hex'), usk, upk),
       ('d', '00000020cdcdeee839089f79fb969a298c0f7dc35ff091556b9bb4b5e4726ad49ac73ec33200000004707473380000000e7373682d636f6e6e656374696f6e000000097075626c69636b6579010000000b7373682d65643235353139000000330000000b7373682d6564323535313900000020d767e033fc0e3df5ebe688e554614068e1e825990dd212939efa26e9f6973e8d'.decode('hex'), '408343d3abf46daaa6112b5e8ca6d9e238343090816cf40bc8370aaa73936995ad2db80373fd66fa87f2a2338a3a3220bdcdde3c4dc3e4137c5d45177eec360b'.decode('hex'), usk, upk),
       ):
-    assert s == signature_unsafe(m, sk, pk), which
+    assert s == sign(m, sk, pk), which
     assert verify(s, m, pk), which
     assert not verify(xor1(s), m, pk), which
     assert not verify(xor1_32(s), m, pk), which
@@ -210,4 +186,5 @@ def check():
 
 
 if __name__ == '__main__':
-  check()
+  for _ in xrange(10):
+    check()
