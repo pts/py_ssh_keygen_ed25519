@@ -1,0 +1,110 @@
+ed25519 crypto, as used in SSH
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+by pts@fazekas.hu at Fri Sep 29 17:41:29 CEST 2017
+
+Crypto primitives:
+
+* gen_keypair() returns (pk, sk).
+** It generates a new keypair. pk is the public key, sk is the secret key.
+** pk is the 32-byte public key.
+** sk is the 32-byte secret key. If it's returned as 64 bytes, then the
+   2nd half is the copy of pk.
+** The secret key can be any 32-byte string, usually it's fully random.
+** The public key can be computed from the (32-byte) secret key, e.g. by
+   function get_public_key_ed25519_unsafe(private_key=sk) defined in
+   https://github.com/pts/py_ssh_keygen_ed25519/blob/master/py_ssh_keygen_ed25519.py .
+** Implemented in tinyssh as crypto_sign_ed25519_tinynacl_keypair.
+*** The output pk is 32 bytes containing the public key.
+*** The output sk is 64 bytes containing the secret key, then the public key.
+** Examples:
+*** hsk: server host secret key, 32 bytes, example: 'e71fa86cb7a2bfd638ea082ad1f364f8702f49b44009f43f523244a621e4e9b0'.decode('hex')
+*** hpk: server host public key, 32 bytes, example: '7df9f38e692271c670530dea40b7bfb08fc07c54ed62998a55d78b9a3f2c6971'.decode('hex')
+*** usk: user secret key, 32 bytes, example: '0a137a15eb42116cb7c3cc4727ad6d4d553c2e4a7ec326ea3472f22a42ff44cc'.decode('hex')
+*** upk: user public key, 32 bytes, example: 'd767e033fc0e3df5ebe688e554614068e1e825990dd212939efa26e9f6973e8d'.decode('hex')
+** Test vectors:
+*** '7df9f38e692271c670530dea40b7bfb08fc07c54ed62998a55d78b9a3f2c6971'.decode('hex') == get_public_key_ed25519_unsafe('e71fa86cb7a2bfd638ea082ad1f364f8702f49b44009f43f523244a621e4e9b0'.decode('hex'))
+*** 'd767e033fc0e3df5ebe688e554614068e1e825990dd212939efa26e9f6973e8d'.decode('hex') == get_public_key_ed25519_unsafe('0a137a15eb42116cb7c3cc4727ad6d4d553c2e4a7ec326ea3472f22a42ff44cc'.decode('hex'))
+
+* sign(m, sk) return s.
+** m is a message string of any length, typically it's shorter than 200 bytes
+   in SSH.
+** sk is the secret key to sign with. It's 32 bytes. (Some APIs want 64 bytes,
+   in which the 2nd 32 bytes contain the public key. This is for convenience,
+   since the public key can be generated from the secret key.)
+** s is the signature of 64 bytes. It depends deterministically on m and sk
+   only, there is no randomness (e.g. salt or nonce).
+** Implemented in tinyssh as crypto_sign_ed25519_tinynacl.
+*** The input m is specified as a memory buffer m[:n].
+*** The input sk is spefified as a memory buffer skorig[:64]. It starts with
+    the secret key, then comes the public key.
+*** The output s is returned as sm[:64], where sm[64 : 64 + n] is a copy of the
+    input message.
+** Test vectors:
+*** 'a12bf2f69c555868561b592a677e227eb31622d4a4bc7b6efaf677720c1a61c6159ae7906ee16777fda64bfd024a80d5bc8cb7d534abe033669d10352c3def08'.decode('hex') == sign('cf32122409544fd680c272ea2756a5fe37d0b0c8a11d092f1bfa4720f7ac3993'.decode('hex'), 'e71fa86cb7a2bfd638ea082ad1f364f8702f49b44009f43f523244a621e4e9b07df9f38e692271c670530dea40b7bfb08fc07c54ed62998a55d78b9a3f2c6971'.decode('hex'))
+*** 'cd74452de0885b833b948060277660ddd4b9635fc4e785f5bc7180202759514c3f587e5b7c18ebcb442325e7f2c451b7876874b04139b5a854edf77b69037404'.decode('hex') == sign('cdcdeee839089f79fb969a298c0f7dc35ff091556b9bb4b5e4726ad49ac73ec3'.decode('hex'), 'e71fa86cb7a2bfd638ea082ad1f364f8702f49b44009f43f523244a621e4e9b07df9f38e692271c670530dea40b7bfb08fc07c54ed62998a55d78b9a3f2c6971'.decode('hex'))
+
+* verify(s, m, pk) returns g.
+** g is a bool indicating whether the verification was successful.
+** m is a message string of any length, typically it's shorter than 200 bytes
+   in SSH.
+** s is the signature of 64 bytes, of the message m.
+** Given the secret key, it can be computed as:
+   verify(s, m, pk) := sign(m, sk) == s.
+** Implemented in tinyssh as crypto_sign_ed25519_tinynacl_open.
+*** The input s is specified as a memory buffer sm[:64].
+*** The input m is specified as a memory buffer sm[64 : smlen - 64].
+*** The input pk is specified as a memory buffer pk[:32].
+*** The return value is 0 iff the verification was successful.
+*** It also copies m (sm[64 : smlen - 64]) to the ouput memory buffer
+    m[:smlen -64].
+** Test vectors:
+*** True == verify('92828b0e28ae91e25f7e8db64228a925378ba5137831ee7220355037ea02568a3de3de03f4301a5e29338e04f34c9e77b7af7958acdcdc15762d8334e02c0000'.decode('hex'), '00000020cf32122409544fd680c272ea2756a5fe37d0b0c8a11d092f1bfa4720f7ac39933200000004707473380000000e7373682d636f6e6e656374696f6e000000097075626c69636b6579010000000b7373682d65643235353139000000330000000b7373682d6564323535313900000020d767e033fc0e3df5ebe688e554614068e1e825990dd212939efa26e9f6973e8d'.decode('hex'), 'd767e033fc0e3df5ebe688e554614068e1e825990dd212939efa26e9f6973e8d'.decode('hex'))
+*** True == verify('408343d3abf46daaa6112b5e8ca6d9e238343090816cf40bc8370aaa73936995ad2db80373fd66fa87f2a2338a3a3220bdcdde3c4dc3e4137c5d45177eec360b'.decode('hex'), '00000020cdcdeee839089f79fb969a298c0f7dc35ff091556b9bb4b5e4726ad49ac73ec33200000004707473380000000e7373682d636f6e6e656374696f6e000000097075626c69636b6579010000000b7373682d65643235353139000000330000000b7373682d6564323535313900000020d767e033fc0e3df5ebe688e554614068e1e825990dd212939efa26e9f6973e8d'.decode('hex'), 'd767e033fc0e3df5ebe688e554614068e1e825990dd212939efa26e9f6973e8d'.decode('hex'))
+*** To get a False result, xor the 1st byte of any of the arguments above with '\1'. (That's 2 * 3 more test vectors.)
+
+Crypto used when creating a server host keypair (hpk, hsk):
+
+* (hpk, hsk) := gen_keypair().
+* Any comment (hpc) can be specified (can be empty, can't contain newlines). Typically it's root@HOSTNAME.
+* hsc is generated as a sting of 4 random bytes.
+* For OpenSSH sshd, /etc/ssh/ssh_host_ed25519_key.pub is written as: 'ssh-ed25519 %s %s\n' % (base64.b64encode(''.join(('\0\0\0\x0bssh-ed25519\0\0\0 ', hpk))), hpc)
+* This will be added to ~/.ssh/known_hosts: '%s ssh-ed25519 %s\n' % (sshd_hostname, base64.b64encode(''.join(('\0\0\0\x0bssh-ed25519\0\0\0 ', hpk))))
+* For OpenSSH sshd, /etc/ssh/ssh_host_ed25519_key is written as: (hsk, hsc, hpk, hpc) encoded with build_openssh_private_key_ed25519 in https://github.com/pts/py_ssh_keygen_ed25519/blob/master/py_ssh_keygen_ed25519.py
+* For tinyssh sshd, hostkey/.ed25519.sk contains 64 bytes: hsk + hpk
+* For tinyssh sshd, hostkey/ed25519.pk contains 32 bytes: hpk
+
+Crypto used when generating a user keypair (upk, usk):
+
+* (upk, usk) := gen_keypair().
+* The user can specify a public comment (upc) string (can be empty, can't contain newlines).
+* This is written to the id_....pub file and ~/.ssh/authorized_keys on the server:
+  'ssh-ed25519 %s %s\n' % (base64.b64encode(''.join(('\0\0\0\x0bssh-ed25519\0\0\0 ', upk))), upc)
+* usc (checkstr) is generated as a sting of 4 random bytes.
+* The id_... file is written as: (usk, usc, upk, upc) encoded with build_openssh_private_key_ed25519 in https://github.com/pts/py_ssh_keygen_ed25519/blob/master/py_ssh_keygen_ed25519.py
+
+Crypto used in SSH when verifying a server host key:
+
+* The server sends hpk to the client.
+* Optionally, the client checks if hpk is in its ~/.ssh/known_hosts, corresponding to sshd_hostname.
+* The client sends any short random message m to the server, to be signed. Typically m is 32 bytes.
+  TODO(pts): Is m really random, or is it the output of a key exchange?
+  m: string of 32 bytes
+  example1 m #1: 'cf32122409544fd680c272ea2756a5fe37d0b0c8a11d092f1bfa4720f7ac3993'
+  example2 m #2: 'cdcdeee839089f79fb969a298c0f7dc35ff091556b9bb4b5e4726ad49ac73ec3'
+* The server computes s := sign(m, hsk) and sends it to the client.
+* The client computes verify(s, m, hpk) and aborts unless successful (true).
+
+Crypto used in SSH when verifying a user key:
+
+* The client sends upk to the server.
+* The server checks that upk is in ~/.ssh/authorized_keys, and aborts if not.
+* The server generates a short message string m2 (typically shorter than 200 bytes), to be signed by the client.
+  example middle_data: '3200000004707473380000000e7373682d636f6e6e656374696f6e000000097075626c69636b6579010000000b7373682d65643235353139000000330000000b7373682d6564323535313900000020'.decode('hex')
+  example m2 (147 bytes, happend to be twice like this): struct.pack('>L', len(m)) + m + middle_data + upk
+* The server sends m2 to the client.
+* The client computes s2 := sign(m2, usk), 64 bytes, and sends it to the server.
+  example s2 for m2 #1: '92828b0e28ae91e25f7e8db64228a925378ba5137831ee7220355037ea02568a3de3de03f4301a5e29338e04f34c9e77b7af7958acdcdc15762d8334e02c0000'.decode('hex')
+  example s2 for m2 #2: '408343d3abf46daaa6112b5e8ca6d9e238343090816cf40bc8370aaa73936995ad2db80373fd66fa87f2a2338a3a3220bdcdde3c4dc3e4137c5d45177eec360b'.decode('hex')
+* The server computes verify(s2, m2, upk), and aborts unless successful (true).
+
+__END__
