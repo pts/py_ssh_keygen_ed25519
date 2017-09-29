@@ -59,7 +59,7 @@ def get_public_key_ed25519_unsafe(private_key, _bpow=[]):
   # Constants inlined.
   e = ((1 << 254) | (int(h[::-1].encode('hex'), 16) & ~(7 | 1 << 255))) % (
       (1 << 252) + 0x14def9dea2f79cd65812631a5cf5d3ed)
-  #ex = ((1 << 254) | (int(h[::-1].encode('hex'), 16) & ~(7 | 1 << 255)))  # !!
+  #ex = ((1 << 254) | (int(h[::-1].encode('hex'), 16) & ~(7 | 1 << 255)))
   #assert 0, ('%064x' % e).decode('hex')[::-1].encode('hex')
   q = (1 << 255) - 19  # A prime.
   # TODO(pts): Where is basepoint = {9} in curve25519-donna.c hidden below?
@@ -269,13 +269,6 @@ def build_openssh_public_key_ed25519(public_key, comment):
 
 
 def check_keyfiles_ed25519(filename, do_dump=True):
-  # !! These keys are (private, public) from: ASCIIHexEncode <tiny_tinyssh_hostkey1/.ed25519.sk
-  private_key3 = 'CC9C1BEB99C25449A75CC189DABC78B491C4D7B460A969871FCEB4E1DC1EB952'.decode('hex')
-  public_key3 =  '1C0AD6543FE40530F1282BEC3CE6F48F3A028E7BE46A98FE6824860645B9AC19'.decode('hex')
-  print private_key3.encode('hex')
-  print public_key3.encode('hex')
-  print (get_public_key_ed25519_unsafe(private_key3)).encode('hex')
-
   f = open(filename)
   try:
     private_key_data = f.read()
@@ -285,7 +278,6 @@ def check_keyfiles_ed25519(filename, do_dump=True):
       parse_openssh_private_key_ed25519(private_key_data))
   print >>sys.stderr, 'info: private key hex: ' + private_key.encode('hex')
 
-  # !!
   items = map(ord, hashlib.sha512(private_key).digest()[:32])
   items[0] &= 248
   items[31] &= 127
