@@ -23,18 +23,6 @@ ll = (1 << 252) + 27742317777372353535851937790883648493
 
 #d = -121665 * inv(121666) % q
 d = 37095705934669439343138083508754565189542113879843219016388785533085940283555
-#I = pow(2, (q - 1) // 4, q)
-I = 19681161376707505956807079304988542015446066515923890162744021073123829784752
-
-
-def xrecover(y):
-  xx = (y * y - 1) * pow(d * y * y + 1, q - 2, q)
-  x = pow(xx, (q + 3) >> 3, q)
-  if (x * x - xx) % q != 0:
-    x = (x * I) % q
-  if x & 1:
-    x = q - x
-  return x
 
 
 #By = 4 * inv(5)
@@ -48,9 +36,9 @@ del Bx, By
 def edwards_add(P, Q):
   # This is formula sequence 'addition-add-2008-hwcd-3' from
   # http://www.hyperelliptic.org/EFD/g1p/auto-twisted-extended-1.html
-  (x1, y1, z1, t1) = P
-  (x2, y2, z2, t2) = Q
-
+  # !! TODO(pts): Make it shorter.
+  x1, y1, z1, t1 = P
+  x2, y2, z2, t2 = Q
   a = (y1-x1)*(y2-x2) % q
   b = (y1+x1)*(y2+x2) % q
   c = (t1<<1)*d*t2 % q
@@ -63,15 +51,14 @@ def edwards_add(P, Q):
   y3 = g*h
   t3 = e*h
   z3 = f*g
-
   return (x3 % q, y3 % q, z3 % q, t3 % q)
 
 
 def edwards_double(P):
   # This is formula sequence 'dbl-2008-hwcd' from
   # http://www.hyperelliptic.org/EFD/g1p/auto-twisted-extended-1.html
-  (x1, y1, z1, t1) = P
-
+  # !! TODO(pts): Make it shorter.
+  x1, y1, z1, t1 = P
   a = x1*x1 % q
   b = y1*y1 % q
   c = (z1<<1)*z1 % q
@@ -84,7 +71,6 @@ def edwards_double(P):
   y3 = g*h
   t3 = e*h
   z3 = f*g
-
   return (x3 % q, y3 % q, z3 % q, t3 % q)
 
 
@@ -110,7 +96,7 @@ def make_Bpow():
 make_Bpow()
 
 
-# !! How much faster is this?
+# !! How much faster is this than scalarmult(B, e)?
 def scalarmult_B(e):
   """Implements scalarmult(B, e) more efficiently."""
   # scalarmult(B, l) is the identity.
@@ -124,46 +110,36 @@ def scalarmult_B(e):
   return P
 
 
-def encodepoint(P):
-  x, y, z, t = P
+def encodepoint(x, y, z, t):
   zi = pow(z, q - 2, q)
-  x = (x * zi) % q
-  y = (y * zi) % q
-  bits = [(y >> i) & 1 for i in xrange(255)] + [x & 1]
-  return ''.join(
-      chr(sum([bits[i * 8 + j] << j for j in xrange(8)]))
-      for i in xrange(32))
+  x, y = (x * zi) % q, (y * zi) % q
+  return ('%064x' % (y | (x & 1) << 255)).decode('hex')[::-1]
+
+
+def gint(h):
+  return int(h[::-1].encode('hex'), 16)
 
 
 def publickey_unsafe(sk):
   h = hashlib.sha512(sk).digest()  # 64 bytes.
-  a = (1 << 254) + sum((1 << i) * ((ord(h[i >> 3]) >> (i % 8)) & 1) for i in xrange(3, 254))  # !!
-  return encodepoint(scalarmult_B(a))
-
-
-def gint(h):
-  assert len(h) in (32, 64)
-  #return sum((1 << i) * ((ord(h[i >> 3]) >> (i % 8)) & 1) for i in xrange(512))
-  #return sum(((ord(h[i >> 3]) >> (i % 8)) & 1) << i for i in xrange(512))
-  #return sum(ord(h[i]) << (i << 3) for i in xrange(64))
-  return int(h[::-1].encode('hex'), 16)
+  a = (1 << 254) | (gint(h[:32]) & ~(7 | 1 << 255))
+  return encodepoint(*scalarmult_B(a))
 
 
 def signature_unsafe(m, sk, pk):
   h = hashlib.sha512(sk).digest()  # 64 bytes.
-  a = (1 << 254) + sum((1 << i) * ((ord(h[i >> 3]) >> (i % 8)) & 1) for i in xrange(3, 254))  # !!
   # TODO(pts): Compute hash without concatenation.
   r = gint(hashlib.sha512(h[32 : 64] + m).digest())
-  R = scalarmult_B(r)
+  p = encodepoint(*scalarmult_B(r))
+  a = (1 << 254) | (gint(h[:32]) & ~(7 | 1 << 255))
   # TODO(pts): Compute hash without concatenation.
-  S = (r + gint(hashlib.sha512(encodepoint(R) + pk + m).digest()) * a) % ll
-  return encodepoint(R) + ('%0128x' % S).decode('hex')[:-33:-1]
+  S = (r + gint(hashlib.sha512(p + pk + m).digest()) * a) % ll
+  return p + ('%064x' % S).decode('hex')[:-33:-1]
 
 
 def verify(s, m, pk):
   if len(s) != 64:
     raise ValueError('Bad signature length.')
-
   if len(pk) != 32:
     raise ValueError('Bad public key length.')
 
@@ -172,27 +148,34 @@ def verify(s, m, pk):
         x*y % q == z*t % q and
         (y*y - x*x - z*z - d*t*t) % q == 0)
 
-  def decodepoint(h):
-    y = sum((1 << i) * ((ord(h[i >> 3]) >> (i % 8)) & 1) for i in xrange(255))  # !!
-    x = xrecover(y)
-    if x & 1 != ((ord(h[255 >> 3]) >> (255 % 8)) & 1):  # !!
+  def decodepoint(y):
+    y1 = (y >> 255) & 1
+    y &= ~(1 << 255)
+    yy = y * y % q
+    xx = (yy - 1) * pow(d * yy + 1, q - 2, q)
+    x = pow(xx, (q + 3) >> 3, q)
+    if (x * x - xx) % q != 0:
+      x = (x * 19681161376707505956807079304988542015446066515923890162744021073123829784752) % q
+    if x & 1:
+      x = q - x
+    if x & 1 != y1:
       x = q - x
     return x, y, 1, (x * y) % q
 
-  R = decodepoint(s[:32])
+  R = decodepoint(gint(s[:32]))
   if not isoncurve(*R):
     return False
-  A = decodepoint(pk)
+  A = decodepoint(gint(pk))
   if not isoncurve(*A):
     return False
   # TODO(pts): Compute hash without concatenation.
-  h = gint(hashlib.sha512(encodepoint(R) + pk + m).digest())
+  h = gint(hashlib.sha512(encodepoint(*R) + pk + m).digest())
 
   x1, y1, z1, t1 = P = scalarmult_B(gint(s[32 : 64]))
   x2, y2, z2, t2 = Q = edwards_add(R, scalarmult(A, h))
 
-  return not (not isoncurve(*P) or not isoncurve(*Q) or
-     (x1*z2 - x2*z1) % q != 0 or (y1*z2 - y2*z1) % q != 0)
+  return bool(isoncurve(*P) and isoncurve(*Q) and
+     (x1*z2 - x2*z1) % q == 0 and (y1*z2 - y2*z1) % q == 0)
 
 
 # ---
