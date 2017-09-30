@@ -230,6 +230,16 @@ def build_openssh_private_key_ed25519(public_key, comment, private_key,
   return ''.join(output)
 
 
+def build_openssh_private_key_ed25519_dropbear(public_key, private_key):
+  if len(private_key) == 64:
+    if private_key[32:] != public_key:
+      raise ValueError('Private key does not match public key.')
+    private_key = private_key[:32]
+  elif len(private_key) != 32:
+    raise ValueError('Expected private key size: 32 or 64')
+  return ''.join(('\0\0\0\x0bssh-ed25519\0\0\0@', private_key, public_key))
+
+
 def parse_openssh_public_key_ed25519(data):
   """Returns (public_key, comment)."""
   data = data.rstrip('\r\n')
@@ -372,6 +382,7 @@ def main(argv):
 
   try:
     filename = comment = key_type = None
+    format = 'openssh'
     i = 1
     while i < len(argv):
       arg = argv[i]
@@ -390,6 +401,9 @@ def main(argv):
       elif arg == '-C' and i < len(argv):
         comment = argv[i]
         i += 1
+      elif arg == '-Z' and i < len(argv):  # OpenSSH ssh-keygen doesn't have it.
+        format = argv[i]
+        i += 1
       else:
         raise ArgumentError('Unknown flag: %s' % arg)
     if i != len(argv):
@@ -398,6 +412,8 @@ def main(argv):
       raise ArgumentError('Please specify: -t ed25519')
     if filename is None:
       raise ArgumentError('Please specify: -f <output-file>')
+    if format not in ('openssh', 'dropbear'):
+      raise ArgumentError('Unknown format: -Z %s' % format)
   except ArgumentError, e:
     print >>sys.stderr, '%s\n\nerror: %s' % (get_doc(), e)
     sys.exit(1)
@@ -407,9 +423,13 @@ def main(argv):
     import socket
     comment = '%s@%s' % (getpass.getuser(), socket.gethostname())
   public_key, private_key = generate_key_pair_ed25519()
-  checkstr = generate_random_bytes(4)
-  private_key_data = build_openssh_private_key_ed25519(
-      public_key, comment, private_key, checkstr)
+  if format == 'dropbear':
+    private_key_data = build_openssh_private_key_ed25519_dropbear(
+        public_key, private_key)
+  else:
+    checkstr = generate_random_bytes(4)
+    private_key_data = build_openssh_private_key_ed25519(
+        public_key, comment, private_key, checkstr)
   # Unlike ssh-keygen, we overwrite files unconditionally.
   try:
     os.remove(filename)
@@ -431,7 +451,10 @@ def main(argv):
     f.write(public_key_data)
   finally:
     f.close()
-  check_keyfiles_ed25519(filename)  # Just double check.
+  if format == 'dropbear':
+    check_public_keyfile_ed25519(filename + '.pub')
+  else:
+    check_keyfiles_ed25519(filename)  # Just double check.
 
 
 if __name__ == '__main__':
