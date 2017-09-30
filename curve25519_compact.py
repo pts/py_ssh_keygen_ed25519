@@ -11,6 +11,15 @@ doesn't use any non-standard Python modules.
 This implementation is relatively fast, as fast as compact pure Python code
 can get.
 
+This is not safe to use with secret keys or secret data.
+The root of the problem is that Python's long-integer arithmetic is
+not designed for use in cryptography.  Specifically, it may take more
+or less time to execute an operation depending on the values of the
+inputs, and its memory access patterns may also depend on the inputs.
+This opens it to timing and cache side-channel attacks which can
+disclose data to an attacker.  We rely on Python's long-integer
+arithmetic, so we cannot handle secrets without risking their disclosure.
+
 The public API is the scalarmult function. Calling scalarmult with 1
 argument only (instead of 2) is equivalent to scalarmult_base in other APIs.
 
@@ -27,14 +36,15 @@ Here is how to use it for Diffie--Hellman key exchange:
 * Now ak == bk, and Alice and Bob have this 32-byte shared secret, which Eve
   (the eavesdropper) doesn't know.
 
-This is not safe to use with secret keys or secret data.
-The root of the problem is that Python's long-integer arithmetic is
-not designed for use in cryptography.  Specifically, it may take more
-or less time to execute an operation depending on the values of the
-inputs, and its memory access patterns may also depend on the inputs.
-This opens it to timing and cache side-channel attacks which can
-disclose data to an attacker.  We rely on Python's long-integer
-arithmetic, so we cannot handle secrets without risking their disclosure.
+This implements all crypto primitives needed by the Diffie-Hellman key
+exchange between ssh and sshd for
+``KexAlgorithms curve25519-sha256@libssh.org''.
+
+With ``HostKeyAlgorithms ssh-ed25519'' and ssh-ed25519 user keys, ssh and
+sshd use elliptic curve signature generation and verification using the
+curve ed25519, implemented in ed25519_compact.py instead.
+Despite the name similarity and the same key size (32 bytes), Curve25519
+and ed25519 don't share behavior, test vectors or code.
 
 Implementation based on:
 https://github.com/nnathan/eccsnacks/blob/master/eccsnacks/curve25519.py

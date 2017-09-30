@@ -13,25 +13,6 @@ doesn't use any non-standard Python modules (except for hashlib in Python
 This implementation is relatively fast, as fast as compact pure Python code
 can get.
 
-The public API is the publickey, sign and verify functions.
-
-This implements crypto all primitives needed by ssh and sshd (except for key
-exchange):
-
-* ssh-keygen uses publickey(...) to generate the server host keypair
-* ssh-keygen uses publickey(...) to generate the user keypair
-* sshd uses sign(...) with the server host secret key
-* ssh uses verify(...) with the server host public key
-* ssh uses sign(...) with the user secret key
-* sshd uses verify(...) with the user public key
-
-Sizes and generation:
-
-* secret key: 32 bytes (can be any random value)
-* public key: 32 bytes (generated from the secret key deterministically)
-* signature: 64 bytes (genereated from the secret key and the message
-  deterministically)
-
 This is not safe to use with secret keys or secret data.
 The root of the problem is that Python's long-integer arithmetic is
 not designed for use in cryptography.  Specifically, it may take more
@@ -40,6 +21,32 @@ inputs, and its memory access patterns may also depend on the inputs.
 This opens it to timing and cache side-channel attacks which can
 disclose data to an attacker.  We rely on Python's long-integer
 arithmetic, so we cannot handle secrets without risking their disclosure.
+
+The public API is the publickey, sign and verify functions.
+
+This implements all crypto primitives needed by ssh and sshd (except for key
+exchange) for ``HostKeyAlgorithms ssh-ed25519'' and ssh-ed25519 user keys:
+
+* ssh-keygen uses publickey(...) to generate the server host keypair.
+* ssh-keygen uses publickey(...) to generate the user keypair.
+* sshd uses sign(...) with the server host secret key.
+* ssh uses verify(...) with the server host public key.
+* ssh uses sign(...) with the user secret key.
+* sshd uses verify(...) with the user public key.
+
+ssh and sshd use Curve25519 (``KexAlgorithms curve25519-sha256@libssh.org'')
+Diffie-Hellman key exchange to generate a shared secret,
+before calls to sign(...) and verify(...) This is implemented in
+curve25519_compact.py instead. Despite the name similarity and the same key
+size (32 bytes), Curve25519 and ed25519 don't share behavior, test vectors
+or code.
+
+Sizes and generation:
+
+* secret key: 32 bytes (can be any random value)
+* public key: 32 bytes (generated from the secret key deterministically)
+* signature: 64 bytes (genereated from the secret key and the message
+  deterministically)
 
 Implementation based on:
 https://github.com/pyca/ed25519/blob/master/ed25519.py

@@ -2,6 +2,17 @@ ed25519 crypto, as used in SSH
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 by pts@fazekas.hu at Fri Sep 29 17:41:29 CEST 2017
 
+Please note that SSH uses (among other algorithms):
+
+* Curve25519 crypto (with ``KexAlgorithms curve25519-sha256@libssh.org'')
+  for Diffie--Hellman key exchange (kex).
+* ed25519 crypto (with ``HostKeyAlgorithms ssh-ed25519'' and ssh-ed25519 user
+  keys) for server authentication (i.e. host key checking, by the client) and
+  user authentication (by the server).
+
+This document is only about ed25519, and it doesn't elaborate on Curve25519 or
+key exchange in SSH at all.
+
 Crypto primitives:
 
 * gen_keypair() returns (pk, sk).
@@ -93,7 +104,8 @@ Crypto used in SSH when verifying a server host key:
 * The server sends hpk to the client.
 * Optionally, the client checks if hpk is in its ~/.ssh/known_hosts, corresponding to sshd_hostname.
 * The client sends any short random message m to the server, to be signed. Typically m is 32 bytes.
-  TODO(pts): Is m really random, or is it the output of a key exchange?
+  Probably m is not random, but the result of some Diffie--Hellman key exchange.
+  TODO(pts): How does the client generate m?
   m: string of 32 bytes
   example1 m #1: 'cf32122409544fd680c272ea2756a5fe37d0b0c8a11d092f1bfa4720f7ac3993'
   example2 m #2: 'cdcdeee839089f79fb969a298c0f7dc35ff091556b9bb4b5e4726ad49ac73ec3'
