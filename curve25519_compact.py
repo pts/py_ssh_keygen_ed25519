@@ -1,136 +1,80 @@
 #! /usr/bin/python
-#
-# Implementation based on:
-# https://github.com/nnathan/eccsnacks/blob/master/eccsnacks/curve25519.py
-# , which is based on: https://tools.ietf.org/html/rfc7748
-#
-# Implementation equivalent to curve25519-donna.c
-#
-# Similar implementation with classes:
-# https://github.com/openalias/dnscrypt-python/blob/master/slownacl/curve25519.py
-#
+# by pts@fazekas.hu at Sat Sep 30 03:17:14 CEST 2017
 
-__all__ = ['scalarmult', 'scalarmult_base']
+"""curve25519_compact.py: Compact Curve25519 crypto DH library.
 
-# implementation is a translation of the pseudocode
-# specified in RFC7748: https://tools.ietf.org/html/rfc7748
+This is a compact implementation of the elliptic curve Diffie--Hellman key
+exchange (kex) crpyto using the elliptic curve Curve25519, in pure
+Python 2.x. It works with Python 2.4, 2.5, 2.6 and 2.7 out of the box, and it
+doesn't use any non-standard Python modules.
 
-P = 2 ** 255 - 19
-A24 = 121665
+This implementation is relatively fast, as fast as compact pure Python code
+can get.
 
+The public API is the scalarmult function. Calling scalarmult with 1
+argument only (instead of 2) is equivalent to scalarmult_base in other APIs.
 
-def cswap(swap, x_2, x_3):
-    dummy = swap * ((x_2 - x_3) % P)
-    x_2 = x_2 - dummy
-    x_2 %= P
-    x_3 = x_3 + dummy
-    x_3 %= P
-    return (x_2, x_3)
+Here is how to use it for Diffie--Hellman key exchange:
 
+* Alice generates a 32-byte random string ask and computes
+  apk := scalarmult(ask).
+* Bob generates a 32-byte random string bsk and computes
+  bpk := scalarmult(bsk).
+* Alice sends apk to Bob.
+* Bob sends bpk to Alice.
+* Alice computes ak := scalarmult(ask, bpk), 32 bytes.
+* Bob computes bk := scalarmult(bsk, apk), 32 bytes.
+* Now ak == bk, and Alice and Bob have this 32-byte shared secret, which Eve
+  (the eavesdropper) doesn't know.
 
-def X25519(k, u):
-    x_1 = u
-    x_2 = 1
-    z_2 = 0
-    x_3 = u
-    z_3 = 1
-    swap = 0
+This is not safe to use with secret keys or secret data.
+The root of the problem is that Python's long-integer arithmetic is
+not designed for use in cryptography.  Specifically, it may take more
+or less time to execute an operation depending on the values of the
+inputs, and its memory access patterns may also depend on the inputs.
+This opens it to timing and cache side-channel attacks which can
+disclose data to an attacker.  We rely on Python's long-integer
+arithmetic, so we cannot handle secrets without risking their disclosure.
 
-    for t in reversed(xrange(255)):
-        k_t = (k >> t) & 1
-        swap ^= k_t
-        x_2, x_3 = cswap(swap, x_2, x_3)
-        z_2, z_3 = cswap(swap, z_2, z_3)
-        swap = k_t
+Implementation based on:
+https://github.com/nnathan/eccsnacks/blob/master/eccsnacks/curve25519.py
+, which is based on: https://tools.ietf.org/html/rfc7748
 
-        A = x_2 + z_2
-        A %= P
+Implementation eqiuvalent to curve25519-donna.c
 
-        AA = A * A
-        AA %= P
+Similar implementation with classes:
+https://github.com/openalias/dnscrypt-python/blob/master/slownacl/curve25519.py
+"""
 
-        B = x_2 - z_2
-        B %= P
-
-        BB = B * B
-        BB %= P
-
-        E = AA - BB
-        E %= P
-
-        C = x_3 + z_3
-        C %= P
-
-        D = x_3 - z_3
-        D %= P
-
-        DA = D * A
-        DA %= P
-
-        CB = C * B
-        CB %= P
-
-        x_3 = ((DA + CB) % P)**2
-        x_3 %= P
-
-        z_3 = x_1 * (((DA - CB) % P)**2) % P
-        z_3 %= P
-
-        x_2 = AA * BB
-        x_2 %= P
-
-        z_2 = E * ((AA + (A24 * E) % P) % P)
-        z_2 %= P
-
-    x_2, x_3 = cswap(swap, x_2, x_3)
-    z_2, z_3 = cswap(swap, z_2, z_3)
-
-    return (x_2 * pow(z_2, P - 2, P)) % P
-
-
-# Equivalent to RFC7748 decodeUCoordinate followed by decodeLittleEndian
-def unpack(s):
-    if len(s) != 32:
-        raise ValueError('Invalid Curve25519 scalar (len=%d)' % len(s))
-    t = sum(ord(s[i]) << (8 * i) for i in range(31))
-    t += ((ord(s[31]) & 0x7f) << 248)
-    return t
-
-
-def pack(n):
-    return ''.join([chr((n >> (8 * i)) & 255) for i in range(32)])
-
-
-def clamp(n):
-    n &= ~7
-    n &= ~(128 << 8 * 31)
-    n |= 64 << 8 * 31
-    return n
-
-
-def scalarmult(n, p):
-    '''
-       Expects n and p in the form as 32-byte strings.
-
-       Multiplies group element p by integer n. Returns the resulting group
-       element as 32-byte string.
-    '''
-
-    n = clamp(unpack(n))
-    p = unpack(p)
-    return pack(X25519(n, p))
-
-
-def scalarmult_base(n):
-    '''
-       Expects n in the form as 32-byte string.
-
-       Computes scalar product of standard group element (9) and n.
-       Returns the resulting group element as 32-byte string.
-    '''
-
-    n = clamp(unpack(n))
-    return pack(X25519(n, 9))
+def scalarmult(n, p=None):
+  # n is a group element string, p is a string representing an integer. Both
+  # are 32 bytes.
+  if len(n) != 32:
+    raise ValueError('Invalid Curve25519 n.')
+  if p is None:
+    u = 9
+  else:
+    if len(p) != 32:
+      raise ValueError('Invalid Curve25519 p.')
+    u = int(p[::-1].encode('hex'), 16)
+  k = (int(n[::-1].encode('hex'), 16) & ~(1 << 255 | 7)) | 1 << 254
+  ql, x1, x2, z2, x3, z3, do_swap = 2 ** 255 - 19, u, 1, 0, u, 1, 0
+  for t in xrange(254, -1, -1):
+    kt = (k >> t) & 1
+    if do_swap ^ kt:
+      x2, x3, z2, z3 = x3, x2, z3, z2
+    do_swap = kt
+    a, b = (x2 + z2) % ql, (x2 - z2) % ql
+    aa, bb = (a * a) % ql, (b * b) % ql
+    c, d = (x3 + z3) % ql, (x3 - z3) % ql
+    da, cb = d * a % ql, c * b % ql
+    d1, d2 = da + cb, da - cb
+    x3, z3 = d1 * d1 % ql, x1 * d2 * d2 % ql
+    x2, e = aa * bb % ql, (aa - bb) % ql
+    z2 = e * (aa + 121665 * e) % ql
+  if do_swap:
+    x2, x3, z2, z3 = x3, x2, z3, z2
+  return ('%064x' % ((x2 * pow(z2, ql - 2, ql)) % ql)).decode('hex')[::-1]
 
 
 def check():
@@ -142,7 +86,16 @@ def check():
 
   # The order matters, scalarmult is not commutative.
   assert scalarmult(d, basepoint) == r
-  assert scalarmult_base(d) == r
+  assert scalarmult(d) == r
+
+  # Diffie--Hellman key exchange.
+  ask, bsk = '\xab' + '\xcd' * 31, '\x12' + '\x34' * 31
+  apk, bpk = scalarmult(ask), scalarmult(bsk)
+  assert apk != bpk
+  assert scalarmult(ask, bpk) == scalarmult(bsk, apk)
+  assert scalarmult(ask, bpk) != scalarmult(bsk, '\00' + apk[1:])
+  assert len(scalarmult(ask, bpk)) == 32
+
   print 'check OK'
 
 
