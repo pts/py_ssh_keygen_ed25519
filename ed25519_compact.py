@@ -10,6 +10,9 @@ works with Python 2.4 if the hashlib package is installed from pypi. It
 doesn't use any non-standard Python modules (except for hashlib in Python
 2.4).
 
+This implementation is relatively fast, as fast as compact pure Python code
+can get.
+
 The public API is the publickey, sign and verify functions.
 
 This implements crypto all primitives needed by ssh and sshd (except for key
@@ -40,6 +43,8 @@ arithmetic, so we cannot handle secrets without risking their disclosure.
 
 Implementation based on:
 https://github.com/pyca/ed25519/blob/master/ed25519.py
+, which is based on
+http://ed25519.cr.yp.to/python/ed25519.py
 """
 
 import hashlib
