@@ -114,7 +114,7 @@ def parse_lenu32str(data, i):
 
 
 def parse_openssh_private_key_ed25519(data):
-  """Returns (public_key, comment, private_key, checkstr)."""
+  """Returns (format, public_key, comment, private_key, checkstr)."""
   # Based on:
   # https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.key
   if not data.startswith('-----BEGIN OPENSSH PRIVATE KEY-----\n'):
@@ -187,7 +187,26 @@ def parse_openssh_private_key_ed25519(data):
     raise ValueError('Unexpected padding value.')
   if public_key != get_public_key_ed25519_unsafe(private_key):
     raise ValueError('Public key and private key do not match.')
-  return public_key, comment, private_key, checkstr1
+  return 'openssh', public_key, comment, private_key, checkstr1
+
+
+def parse_dropbear_private_key_ed25519(data):
+  """Returns (format, public_key, comment, private_key, checkstr)."""
+  if not data.startswith('\0\0\0\x0bssh-ed25519\0\0\0@'):
+    raise ValueError('Missing dropbear private key signature.')
+  if len(data) != 83:
+    raise ValueError('Bad file size of dropbear private key.')
+  return ('dropbear', data[51 : 83], None, data[19 : 51], None)
+
+
+def parse_private_key_ed25519(data):
+  """Returns (format, public_key, comment, private_key, checkstr)."""
+  if data.startswith('-----BEGIN OPENSSH PRIVATE KEY-'):
+    return parse_openssh_private_key_ed25519(data)
+  elif data.startswith('\0\0\0\x0bssh-ed25519'):
+    return parse_dropbear_private_key_ed25519(data)
+  else:
+    raise ValueError('Unrecogized private key data: %r' % data[:16])
 
 
 def build_openssh_private_key_ed25519(public_key, comment, private_key,
@@ -230,7 +249,7 @@ def build_openssh_private_key_ed25519(public_key, comment, private_key,
   return ''.join(output)
 
 
-def build_openssh_private_key_ed25519_dropbear(public_key, private_key):
+def build_dropbear_private_key_ed25519(public_key, private_key):
   if len(private_key) == 64:
     if private_key[32:] != public_key:
       raise ValueError('Private key does not match public key.')
@@ -284,8 +303,8 @@ def check_keyfiles_ed25519(filename, do_dump=True):
     private_key_data = f.read()
   finally:
     f.close()
-  public_key, comment, private_key, checkstr = (
-      parse_openssh_private_key_ed25519(private_key_data))
+  format, public_key, comment, private_key, checkstr = (
+      parse_private_key_ed25519(private_key_data))
   print >>sys.stderr, 'info: private key hex: ' + private_key.encode('hex')
 
   items = map(ord, hashlib.sha512(private_key).digest()[:32])
@@ -297,8 +316,12 @@ def check_keyfiles_ed25519(filename, do_dump=True):
 
   print >>sys.stderr, 'info: public  key hex: ' + public_key.encode('hex')
   print >>sys.stderr, 'info: public2 key hex: ' + (get_public_key_ed25519_unsafe(private_key)).encode('hex')
-  private_key_data2 = build_openssh_private_key_ed25519(
-      public_key, comment, private_key, checkstr)
+  if format == 'dropbear':
+    private_key_data2 = build_dropbear_private_key_ed25519(
+        public_key, private_key)
+  else:
+    private_key_data2 = build_openssh_private_key_ed25519(
+        public_key, comment, private_key, checkstr)
   if private_key_data != private_key_data2:
     raise ValueError('Unexpected build private output.')
 
@@ -312,11 +335,11 @@ def check_keyfiles_ed25519(filename, do_dump=True):
   public_key_data2 = build_openssh_public_key_ed25519(
       public_key2, comment2)
   if public_key_data != public_key_data2:
-    raise ValueError('Unexpected build public output.')
+    raise ValueError('Computed and stored public keys do not match.')
   if public_key2 != public_key:
     raise ValueError('Public key mismatch in two files.')
-  if comment2 != comment:
-    raise ValueError('Public key mismatch in two files.')
+  if comment is not None and comment2 != comment:
+    raise ValueError('Comment mismatch in two files.')
 
 
 def check_public_keyfile_ed25519(filename_pub):
@@ -424,7 +447,7 @@ def main(argv):
     comment = '%s@%s' % (getpass.getuser(), socket.gethostname())
   public_key, private_key = generate_key_pair_ed25519()
   if format == 'dropbear':
-    private_key_data = build_openssh_private_key_ed25519_dropbear(
+    private_key_data = build_dropbear_private_key_ed25519(
         public_key, private_key)
   else:
     checkstr = generate_random_bytes(4)
@@ -451,10 +474,7 @@ def main(argv):
     f.write(public_key_data)
   finally:
     f.close()
-  if format == 'dropbear':
-    check_public_keyfile_ed25519(filename + '.pub')
-  else:
-    check_keyfiles_ed25519(filename)  # Just double check.
+  check_keyfiles_ed25519(filename)  # Just double check.
 
 
 if __name__ == '__main__':
